@@ -19,6 +19,20 @@ checked; preserved upstream README checked; changed paths and local links
 reviewed; git whitespace check performed. No native Graphix build, testautomation
 run, release package or human runtime validation is claimed by this entry.
 
+## 2026-09-06: remove contribution and agent policies
+
+At the maintainer's request, removed the agent instruction files, contribution
+guides and pull request template. Updated documentation references and removed
+Graphix's contribution-policy requirements from the README. The fork rationale
+and this historical change record remain; neither makes upstream SDL's policy
+a rule for Graphix.
+
+These documentation changes were prepared with AI assistance. SDL licensing,
+attribution, upstream history and native sources are unchanged. Verification
+covers the changed paths, local documentation links and whitespace, plus
+preservation of the license and native source tree. No native build or test run
+is claimed for this documentation-only change.
+
 ## Reproduced upstream defect awaiting a fix
 
 Cerneala's automated Windows x64 window contract tests reproduced the following
