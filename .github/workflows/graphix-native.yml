@@ -1,0 +1,118 @@
+# Graphix addition: build/test artifacts only; no release or NuGet publication.
+name: Graphix native packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: New Graphix.Native prerelease version
+        required: true
+        default: 3.4.16-graphix.1
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PACKAGE_VERSION: ${{ inputs.package_version }}
+  SDL_TESTS_QUICK: '1'
+
+jobs:
+  native:
+    name: Build and test ${{ matrix.rid }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            runner: windows-2025
+          - rid: win-arm64
+            runner: windows-11-arm
+          - rid: linux-x64
+            runner: ubuntu-24.04
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+          - rid: osx-x64
+            runner: macos-15-intel
+          - rid: osx-arm64
+            runner: macos-15
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GRAPHIX_RID: ${{ matrix.rid }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux development dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
+            libusb-1.0-0-dev libdbus-1-dev libudev-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxtst-dev libxrender-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev \
+            libpipewire-0.3-dev
+      - name: Build and stage native runtime
+        run: |
+          ./build-scripts/Build-GraphixNative.ps1 -RuntimeIdentifier $env:GRAPHIX_RID -PackageVersion $env:PACKAGE_VERSION
+      - name: Run upstream CTest suite
+        run: |
+          $root = "out/graphix/$env:PACKAGE_VERSION/$env:GRAPHIX_RID"
+          ctest --test-dir "$root/build" -C Release --output-on-failure --parallel 1 --no-tests=error --output-junit "$env:GITHUB_WORKSPACE/$root/logs/ctest.xml" 2>&1 | Tee-Object "$root/logs/ctest.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Graphix native CTest suite failed.' }
+      - name: Upload tested native payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: graphix-native-${{ matrix.rid }}
+          # The wildcard keeps the RID directory in the artifact root.
+          path: |
+            out/graphix/${{ env.PACKAGE_VERSION }}/*/native/*
+            out/graphix/${{ env.PACKAGE_VERSION }}/*/build.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload build and test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: graphix-evidence-${{ matrix.rid }}
+          path: out/graphix/${{ env.PACKAGE_VERSION }}/*/logs/*
+          if-no-files-found: warn
+          retention-days: 30
+
+  package:
+    name: Verify and assemble native-only NuGet
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: graphix-native-*
+          path: out/graphix/${{ env.PACKAGE_VERSION }}
+          merge-multiple: true
+      - name: Verify provenance and package all six RIDs
+        shell: pwsh
+        run: ./build-scripts/Pack-GraphixNative.ps1 -PackageVersion $env:PACKAGE_VERSION
+      - name: Upload NuGet artifact without publishing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Graphix.Native-${{ env.PACKAGE_VERSION }}
+          path: out/packages/*.nupkg
+          if-no-files-found: error
+          retention-days: 30

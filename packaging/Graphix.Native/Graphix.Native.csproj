@@ -1,0 +1,51 @@
+<Project>
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>../../out/pack/obj/</BaseIntermediateOutputPath>
+    <OutputPath>../../out/pack/bin/</OutputPath>
+  </PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <IsPackable>true</IsPackable>
+    <PackageId>Graphix.Native</PackageId>
+    <Authors>SDL contributors; Graphix contributors</Authors>
+    <Description>Graphix native runtime: an independently maintained SDL fork for Cerneala. Preserves the SDL3 C API and ABI; contains no managed binding.</Description>
+    <PackageProjectUrl>https://github.com/Chevalier12/Graphix</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Chevalier12/Graphix</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>Graphix;SDL3;native</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <GraphixNativeFile Include="$(GraphixNativeRoot)/win-x64/native/SDL3.dll" Rid="win-x64" />
+    <GraphixNativeFile Include="$(GraphixNativeRoot)/win-arm64/native/SDL3.dll" Rid="win-arm64" />
+    <GraphixNativeFile Include="$(GraphixNativeRoot)/linux-x64/native/libSDL3.so;$(GraphixNativeRoot)/linux-x64/native/libSDL3.so.0;$(GraphixNativeRoot)/linux-x64/native/libSDL3.so.0.4.16" Rid="linux-x64" />
+    <GraphixNativeFile Include="$(GraphixNativeRoot)/linux-arm64/native/libSDL3.so;$(GraphixNativeRoot)/linux-arm64/native/libSDL3.so.0;$(GraphixNativeRoot)/linux-arm64/native/libSDL3.so.0.4.16" Rid="linux-arm64" />
+    <GraphixNativeFile Include="$(GraphixNativeRoot)/osx-x64/native/libSDL3.dylib;$(GraphixNativeRoot)/osx-x64/native/libSDL3.0.dylib" Rid="osx-x64" />
+    <GraphixNativeFile Include="$(GraphixNativeRoot)/osx-arm64/native/libSDL3.dylib;$(GraphixNativeRoot)/osx-arm64/native/libSDL3.0.dylib" Rid="osx-arm64" />
+    <GraphixProvenance Include="$(GraphixNativeRoot)/win-x64/build.json" Rid="win-x64" />
+    <GraphixProvenance Include="$(GraphixNativeRoot)/win-arm64/build.json" Rid="win-arm64" />
+    <GraphixProvenance Include="$(GraphixNativeRoot)/linux-x64/build.json" Rid="linux-x64" />
+    <GraphixProvenance Include="$(GraphixNativeRoot)/linux-arm64/build.json" Rid="linux-arm64" />
+    <GraphixProvenance Include="$(GraphixNativeRoot)/osx-x64/build.json" Rid="osx-x64" />
+    <GraphixProvenance Include="$(GraphixNativeRoot)/osx-arm64/build.json" Rid="osx-arm64" />
+    <None Include="@(GraphixNativeFile)" Pack="true" PackagePath="runtimes/%(Rid)/native/" />
+    <None Include="@(GraphixProvenance)" Pack="true" PackagePath="provenance/%(Rid)/" />
+    <None Include="../../LICENSE.txt" Pack="true" PackagePath="/" />
+    <None Include="../../README-SDL.md" Pack="true" PackagePath="/" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <Target Name="RequireGraphixNativeArtifacts" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(GraphixNativeRoot)' == ''" Text="GraphixNativeRoot is required. Use build-scripts/Pack-GraphixNative.ps1." />
+    <Error Condition="'$(RepositoryCommit)' == ''" Text="The verified Graphix source commit is required." />
+    <Error Condition="!Exists('%(GraphixNativeFile.Identity)')" Text="Missing required Graphix native artifact: %(GraphixNativeFile.Identity)" />
+    <Error Condition="!Exists('%(GraphixProvenance.Identity)')" Text="Missing Graphix provenance for %(GraphixProvenance.Rid)." />
+  </Target>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

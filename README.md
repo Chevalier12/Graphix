@@ -33,16 +33,22 @@ contributions to Graphix.
 - Upstream history and tags are retained. Updates are deliberate and versioned,
   not automatic tracking of SDL's development branch.
 
-The Graphix changes so far establish the fork's identity and documentation
-only. They do not yet fix the window-sizing defect, publish native
-packages, or certify a Graphix build. See [GRAPHIX.md](GRAPHIX.md) for the change
-record and verification status.
+Graphix adds a versioned native-only NuGet build recipe and an explicit
+six-RID GitHub Actions workflow. The window-sizing defect remains unfixed.
+No NuGet publication or complete cross-platform certification is claimed.
+See [GRAPHIX.md](GRAPHIX.md) for the change record and verification status.
 
 ## Building
 
 SDL's [installation guide](INSTALL.md) and [CMake guide](docs/README-cmake.md)
 remain the build references. The upstream README is preserved in
 [README-SDL.md](README-SDL.md) as upstream documentation, not Graphix branding.
+
+For versioned native artifacts, use the
+[Graphix.Native build and packaging instructions](packaging/Graphix.Native/README.md).
+The manually dispatched `Graphix native packages` workflow builds and tests
+Windows, Linux and macOS on x64 and ARM64, then assembles a NuGet artifact only
+if all six jobs pass. It does not publish packages or create GitHub releases.
 
 ## License and provenance
 

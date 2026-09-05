@@ -8,6 +8,8 @@ concurrency:
 
 jobs:
   controller:
+    # Graphix uses its explicit six-RID workflow, not SDL's all-platform matrix.
+    if: github.repository == 'libsdl-org/SDL'
     name: 'Create test plan'
     runs-on: 'ubuntu-latest'
     outputs:
