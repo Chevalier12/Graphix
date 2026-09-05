@@ -1,11 +1,23 @@
-Generative AI, including large language models (LLMs), should not be used in
-any way when contributing to SDL.
+# Graphix contributor instructions
 
-We want our code to be art. We want to interact with real humans. Please don't
-submit AI-generated comments or code in bug reports or pull requests. We
-understand some people consider AI to be a useful tool, but we want to connect
-with you, not your computer.
+This repository is Graphix, an independent fork of SDL maintained for Cerneala.
+The maintainer has chosen an AI-assisted development workflow for this fork.
+These instructions govern contributions to Graphix, not to upstream SDL.
 
-Any pull request to this project will ask you to confirm that you are the
-author and that you are contributing your changes under the zlib license.
+- Follow CONTRIBUTING.md. Disclose AI assistance; do not claim generated work
+  was exclusively human-authored or independently reviewed when it was not.
+- Preserve LICENSE.txt and existing copyright/license notices. Identify Graphix
+  modifications and preserve the exact upstream base and change provenance.
+- Reproduce a defect before modifying production code. Add a regression test,
+  confirm the intended failure, fix the owning invariant and rerun the test.
+- Run affected tests and the applicable SDL automation/build gates. Report
+  failing, skipped or unavailable gates accurately; compilation is not proof
+  of correctness. Do not claim human validation without a human's result.
+- Keep changes small and separate unrelated fixes. Preserve the SDL C API, ABI
+  and library names unless the maintainer explicitly approves a breaking change.
+- Respect upstream SDL's independent contribution policy. Do not submit
+  AI-generated code or comments prohibited by that policy, conceal AI use, or
+  open upstream issues/PRs without explicit maintainer authorization.
 
+The original upstream AI policy remains available in the unmodified
+release-3.4.16 tag and its git history; it is not Graphix's contribution policy.
