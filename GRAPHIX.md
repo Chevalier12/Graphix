@@ -78,6 +78,50 @@ Cross-platform CI, completed package assembly, downstream NuGet integration,
 the native sizing fix, broader Cerneala verification and human validation
 remain pending. These Graphix additions were prepared with AI assistance.
 
+## 2026-09-06: Windows ARM64 process crash investigation
+
+The first six-RID package workflow at commit
+`7c52ac5efcdb741f87205be8750c3f20a4e48b02` built every native library. CTest
+passed 25/25 on Windows x64, both Linux architectures and both macOS
+architectures. On Windows ARM64, `testprocess` terminated with `SEGFAULT`
+during `process_testStdinToStdout`; its other 24 CTest entries passed.
+Re-running the failed job reproduced the crash without source changes.
+The recorded seeds are `PYYDU0DMT75FOLTR` and `FV7817M2BX373BWP`.
+Package assembly was blocked; no complete package was produced or published.
+
+The `Graphix native process diagnostics` workflow builds the existing process
+tests with MSVC AddressSanitizer and debug symbols on native x64 and ARM64
+runners, then exercises both recorded seeds against an explicit source commit.
+This permits separate RED and GREEN runs without changing test source in CI.
+It uploads text logs only, does
+not produce a runtime package and does not alter native implementation or test
+source. MSVC 2026 is required for ARM64 AddressSanitizer support. This is an
+instrumented diagnostic configuration, not the package recipe's compiler
+configuration and not a replacement for its six-RID verification gate.
+
+The uninstrumented local x64 comparisons with the first seed, normally and
+with `--randmem`, passed. A subsequent local diagnostic changed only SDL's
+allocator in a temporary copy of the process-test executable: reallocations
+were filled with nonzero bytes and followed by a protected page. The original
+test then failed at the same input/output phase. Its stack showed
+`process_testStdinToStdout -> strstr`; the invalid read reached the guard page
+after a 5120-byte allocation.
+
+The dynamic stdout stream contains raw bytes without a NUL terminator. Its
+unbounded marker search was therefore a test-fixture overread. Graphix changes
+that search to `SDL_strnstr` bounded by the received byte count; the native
+runtime and public API are unchanged. With the same guarded allocator, both
+recorded seeds passed three times each, preserving the 1 MiB byte-for-byte
+comparison and process-lifetime assertions. The local Release CTest suite
+passed 25/25 in 57.15 seconds after this test correction.
+
+Native ARM64 confirmation and the six-RID package gate remain pending. Local
+syntax checks cover the four PowerShell steps. Actionlint 1.7.12's outdated
+runner-label warning for `windows-11-vs2026-arm` is excluded specifically after
+checking the label and installed ASan component against GitHub's official
+runner image documentation; its other checks pass. The diagnostic workflow
+has not yet run. These additions were prepared with AI assistance.
+
 ## Reproduced upstream defect awaiting a fix
 
 Cerneala's automated Windows x64 window contract tests reproduced the following

@@ -1,0 +1,103 @@
+# Graphix addition: instrument existing process tests without packaging a runtime.
+name: Graphix native process diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact Graphix commit to diagnose (40 hexadecimal characters)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  process-asan:
+    name: Process AddressSanitizer ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            host: Hostx64
+            asan: x86_64
+            runner: windows-2025-vs2026
+          - arch: ARM64
+            host: Hostarm64
+            asan: aarch64
+            runner: windows-11-vs2026-arm
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GRAPHIX_ARCH: ${{ matrix.arch }}
+      GRAPHIX_HOST: ${{ matrix.host }}
+      GRAPHIX_ASAN: ${{ matrix.asan }}
+      SDL_AUDIO_DRIVER: dummy
+      SDL_VIDEO_DRIVER: dummy
+      SDL_ASSERT: abort
+      NO_COLOR: '1'
+      GRAPHIX_SOURCE_COMMIT: ${{ inputs.source_commit }}
+    steps:
+      - name: Validate source commit
+        run: |
+          if ($env:GRAPHIX_SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$') {
+            throw 'Supply an exact Graphix source commit, not a moving branch or tag.'
+          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Locate native MSVC AddressSanitizer runtime
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.ASAN -format json | ConvertFrom-Json
+          if (-not $vs -or ([version]$vs.installationVersion).Major -ne 18) {
+            throw 'This diagnostic requires Visual Studio 2026 with AddressSanitizer.'
+          }
+          $version = (Get-Content "$($vs.installationPath)/VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt" -Raw).Trim()
+          $bin = "$($vs.installationPath)/VC/Tools/MSVC/$version/bin/$env:GRAPHIX_HOST/$env:GRAPHIX_ARCH"
+          if (-not (Test-Path "$bin/clang_rt.asan_dynamic-$env:GRAPHIX_ASAN.dll")) {
+            throw "Native AddressSanitizer runtime missing from $bin"
+          }
+          $bin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build existing process tests with symbols and AddressSanitizer
+        run: |
+          New-Item -ItemType Directory -Path out/process-asan/logs -Force | Out-Null
+          cmake -S . -B out/process-asan/build -G 'Visual Studio 18 2026' -A $env:GRAPHIX_ARCH `
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=ON -DSDL_TEST_LIBRARY=ON `
+            -DSDL_EXAMPLES=OFF -DSDL_WERROR=ON `
+            '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded' `
+            '-DCMAKE_C_FLAGS_RELWITHDEBINFO=/O2 /Zi /DNDEBUG /fsanitize=address' `
+            '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=/O2 /Zi /DNDEBUG /fsanitize=address' `
+            '-DCMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO=/DEBUG /INCREMENTAL:NO' `
+            '-DCMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO=/DEBUG /INCREMENTAL:NO' `
+            2>&1 | Tee-Object out/process-asan/logs/configure.log
+          if ($LASTEXITCODE -ne 0) { throw 'ASan configuration failed.' }
+          cmake --build out/process-asan/build --config RelWithDebInfo --target testprocess --parallel 8 `
+            2>&1 | Tee-Object out/process-asan/logs/build.log
+          if ($LASTEXITCODE -ne 0) { throw 'ASan process-test build failed.' }
+      - name: Reproduce the two recorded process-test seeds
+        timeout-minutes: 3
+        run: |
+          $env:PATH = "$env:GITHUB_WORKSPACE/out/process-asan/build/RelWithDebInfo;$env:PATH"
+          $test = "$env:GITHUB_WORKSPACE/out/process-asan/build/test/RelWithDebInfo/testprocess.exe"
+          $child = "$env:GITHUB_WORKSPACE/out/process-asan/build/test/RelWithDebInfo/childprocess.exe"
+          $failed = $false
+          foreach ($seed in @('PYYDU0DMT75FOLTR', 'FV7817M2BX373BWP')) {
+            & $test $child --filter process_testStdinToStdout --seed $seed `
+              2>&1 | Tee-Object "out/process-asan/logs/process-$seed.log"
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          }
+          if ($failed) { throw 'AddressSanitizer process reproduction failed; inspect the logs.' }
+      - name: Preserve diagnostic logs only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: graphix-process-asan-${{ matrix.arch }}
+          path: out/process-asan/logs/*
+          if-no-files-found: warn
+          retention-days: 30
