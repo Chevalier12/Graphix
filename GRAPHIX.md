@@ -145,3 +145,51 @@ loaded module path and SHA-256 were observed, not inferred from a package label.
 
 This evidence is a focused upstream diagnosis, not full-suite certification of
 Graphix or a claim that the defect has already been fixed here.
+
+## 2026-09-06: Native Windows maximum-size correction
+
+The process-test correction was confirmed under AddressSanitizer: both recorded
+seeds failed on the original source and passed after the correction, on native
+x64 and ARM64. Commit 64d5819b479751ba988f21b8a8b7a74a84a4dafd then passed all
+six native CTest suites (25 tests each), and CI produced Graphix.Native
+3.4.16-graphix.1. Cerneala now restores that verified baseline from an explicitly
+approved local feed; no NuGet publication has occurred.
+
+The new Windows regression drives WM_SYSCOMMAND/SC_MAXIMIZE instead of relying
+on SDL_MaximizeWindow's separate programmatic clamp. Its deterministic matrix
+covers bordered and borderless windows, either finite axis, both finite, both
+unlimited and limits equal to the current client size. Six cases across two
+styles repeat three times, and queries check that unlimited axes retain the
+native tracking limits. Before the fix, 30 of 400 assertions failed.
+
+WM_GETMINMAXINFO now preserves and applies the finite-limit flag separately
+for each axis, including when subtracting the current size produces zero.
+The first correction fixed bordered windows. The borderless comparison then
+showed a constrained 400x300 outer window with a 1920x1020 client: the later
+WM_NCCALCSIZE handler replaced its rectangle with the entire monitor work area.
+That handler now intersects the proposed window rectangle with the work area
+instead of expanding it. No public C API, ABI or unrelated backend changes
+are required. The resulting matrix passed all 400 assertions. The local
+Release CTest suite passed 25/25 in 55.09 seconds with the final source.
+
+An exploratory extra assertion asked that even an unlimited axis of a bounded,
+bordered window stay within the work-area dimensions. Native message tracing
+showed Windows supplying the full-monitor maximize size before SDL changed it.
+That assertion would impose an additional window-manager policy beyond the
+independent maximum-size contract; it is not part of this regression or fix.
+The temporary trace and ineffective ptMaxSize experiments were removed. The
+unlimited axis remains owned by Windows; no arbitrary offsets were introduced.
+
+The package workflow now runs this real Windows-driver regression on both
+Windows architectures before uploading a payload, in addition to the unchanged
+dummy-driver CTest suite. Local actionlint and four PowerShell block syntax
+checks pass. Native ARM64 verification of this window fix and a new immutable
+package version remain pending.
+
+Cerneala's isolated run with the corrected Windows DLL passes the original two
+maximum-size cases. Its broader gates are not green: an ownership/input test
+intermittently reports pointer -1 instead of 45, an allocation test failed in
+the full suite but passed focused, and a multisampled text/stroke rendering
+comparison differs by 47/255 with Graphix 3.4.16 while passing with SDL 3.4.14.
+These findings are being investigated separately, not attributed to this
+window fix or waived. These Graphix changes were prepared with AI assistance.

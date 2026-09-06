@@ -1705,7 +1705,7 @@ LRESULT CALLBACK WIN_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         int w, h;
         int min_w, min_h;
         int max_w, max_h;
-        BOOL constrain_max_size;
+        bool constrain_max_width, constrain_max_height;
 
         // If this is an expected size change, allow it
         if (data->expected_resize) {
@@ -1726,12 +1726,14 @@ LRESULT CALLBACK WIN_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
            size so we don't need to call AdjustWindowRectEx twice */
         min_w -= w;
         min_h -= h;
-        if (max_w && max_h) {
+        /* Graphix: zero means unlimited independently on each axis. */
+        constrain_max_width = (max_w != 0);
+        constrain_max_height = (max_h != 0);
+        if (constrain_max_width) {
             max_w -= w;
+        }
+        if (constrain_max_height) {
             max_h -= h;
-            constrain_max_size = TRUE;
-        } else {
-            constrain_max_size = FALSE;
         }
 
         if (!(SDL_GetWindowFlags(data->window) & SDL_WINDOW_BORDERLESS) && !SDL_WINDOW_IS_POPUP(data->window)) {
@@ -1760,8 +1762,10 @@ LRESULT CALLBACK WIN_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             info->ptMinTrackSize.x = (LONG)w + min_w;
             info->ptMinTrackSize.y = (LONG)h + min_h;
-            if (constrain_max_size) {
+            if (constrain_max_width) {
                 info->ptMaxTrackSize.x = (LONG)w + max_w;
+            }
+            if (constrain_max_height) {
                 info->ptMaxTrackSize.y = (LONG)h + max_h;
             }
         } else {
@@ -2282,7 +2286,10 @@ LRESULT CALLBACK WIN_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     SDL_zero(info);
                     info.cbSize = sizeof(info);
                     if (GetMonitorInfo(hMonitor, &info)) {
-                        params->rgrc[0] = info.rcWork;
+                        /* Graphix: do not expand the client beyond the constrained window. */
+                        RECT client;
+                        IntersectRect(&client, &params->rgrc[0], &info.rcWork);
+                        params->rgrc[0] = client;
                     }
                 }
             } else if (!(window_flags & SDL_WINDOW_RESIZABLE) && !data->force_ws_maximizebox) {

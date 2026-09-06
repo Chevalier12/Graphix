@@ -5,6 +5,10 @@
 #include <SDL3/SDL_test.h>
 #include "testautomation_suites.h"
 
+#ifdef SDL_PLATFORM_WINDOWS
+#include <windows.h>
+#endif
+
 /* Private helpers */
 
 static bool VideoSupportsWindowPositioning(void)
@@ -2616,6 +2620,87 @@ static int SDLCALL video_raiseWindow(void *arg)
     return TEST_COMPLETED;
 }
 
+/* Graphix: exercise the native maximize command, not SDL's programmatic clamp. */
+static int SDLCALL video_windowsNativeMaximumSize(void *arg)
+{
+#ifdef SDL_PLATFORM_WINDOWS
+    static const int limits[][2] = {
+        { 400, 0 }, { 0, 300 }, { 400, 300 }, { 0, 0 },
+        { 320, 0 }, { 0, 240 }
+    };
+    int borderless, variation, cycle;
+
+    if (SDL_strcmp(SDL_GetCurrentVideoDriver(), "windows") != 0) {
+        return TEST_SKIPPED;
+    }
+
+    for (borderless = 0; borderless < 2; ++borderless) {
+        SDL_Window *window = SDL_CreateWindow("Graphix native maximum size", 320, 240,
+            SDL_WINDOW_RESIZABLE | (borderless ? SDL_WINDOW_BORDERLESS : 0));
+        HWND hwnd;
+        SDLTest_AssertCheck(window != NULL, "Create %s resizable window: %s",
+            borderless ? "borderless" : "bordered", SDL_GetError());
+        if (!window) {
+            return TEST_ABORTED;
+        }
+        hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+        SDLTest_AssertCheck(hwnd != NULL, "Window has a native HWND");
+        if (!hwnd) {
+            SDL_DestroyWindow(window);
+            return TEST_ABORTED;
+        }
+
+        for (cycle = 0; cycle < 3; ++cycle) {
+            for (variation = 0; variation < SDL_arraysize(limits); ++variation) {
+                const int max_w = limits[variation][0];
+                const int max_h = limits[variation][1];
+                MINMAXINFO tracking;
+                RECT client, outer;
+                int width, height;
+
+                SDLTest_AssertCheck(SDL_RestoreWindow(window), "Restore before case %d, cycle %d", variation, cycle);
+                SDLTest_AssertCheck(SDL_SyncWindow(window), "Synchronize restore");
+                SDLTest_AssertCheck(SDL_SetWindowMaximumSize(window, 0, 0), "Clear previous limits");
+                SDLTest_AssertCheck(SDL_SetWindowSize(window, 320, 240), "Reset client size");
+                SDLTest_AssertCheck(SDL_SyncWindow(window), "Synchronize reset size");
+                SDLTest_AssertCheck(SDL_SetWindowMaximumSize(window, max_w, max_h), "Set maximum %dx%d", max_w, max_h);
+
+                SDL_zero(tracking);
+                tracking.ptMaxTrackSize.x = 10000;
+                tracking.ptMaxTrackSize.y = 10000;
+                SendMessage(hwnd, WM_GETMINMAXINFO, 0, (LPARAM)&tracking);
+                if (!max_w) {
+                    SDLTest_AssertCheck(tracking.ptMaxTrackSize.x == 10000, "Unlimited width preserves native tracking limit");
+                }
+                if (!max_h) {
+                    SDLTest_AssertCheck(tracking.ptMaxTrackSize.y == 10000, "Unlimited height preserves native tracking limit");
+                }
+
+                SendMessage(hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+                SDL_PumpEvents();
+                SDLTest_AssertCheck(IsZoomed(hwnd), "Native maximize sets maximized state");
+                if (!SDLTest_AssertCheck(GetClientRect(hwnd, &client) && GetWindowRect(hwnd, &outer), "Read native client and window rectangles")) {
+                    SDL_DestroyWindow(window);
+                    return TEST_ABORTED;
+                }
+                width = (int)(client.right - client.left);
+                height = (int)(client.bottom - client.top);
+                SDLTest_Log("Native geometry: outer %ldx%ld, client %dx%d, limits %dx%d, borderless %d",
+                    outer.right - outer.left, outer.bottom - outer.top, width, height, max_w, max_h, borderless);
+                SDLTest_AssertCheck(width > 0 && (!max_w || width <= max_w),
+                    "Maximum width %d, actual %d (borderless %d, case %d, cycle %d)", max_w, width, borderless, variation, cycle);
+                SDLTest_AssertCheck(height > 0 && (!max_h || height <= max_h),
+                    "Maximum height %d, actual %d (borderless %d, case %d, cycle %d)", max_h, height, borderless, variation, cycle);
+            }
+        }
+        SDL_DestroyWindow(window);
+    }
+    return TEST_COMPLETED;
+#else
+    return TEST_SKIPPED;
+#endif
+}
+
 /* ================= Test References ================== */
 
 /* Video test cases */
@@ -2710,6 +2795,10 @@ static const SDLTest_TestCaseReference videoTestRaiseWindow = {
     video_raiseWindow, "video_raiseWindow", "Checks window focus", TEST_ENABLED
 };
 
+static const SDLTest_TestCaseReference videoTestWindowsNativeMaximumSize = {
+    video_windowsNativeMaximumSize, "video_windowsNativeMaximumSize", "Graphix: checks independent maximum dimensions through native Windows maximize", TEST_ENABLED
+};
+
 /* Sequence of Video test cases */
 static const SDLTest_TestCaseReference *videoTests[] = {
     &videoTestEnableDisableScreensaver,
@@ -2735,6 +2824,7 @@ static const SDLTest_TestCaseReference *videoTests[] = {
     &videoTestCreateMaximized,
     &videoTestGetWindowSurface,
     &videoTestRaiseWindow,
+    &videoTestWindowsNativeMaximumSize,
     NULL
 };
 
