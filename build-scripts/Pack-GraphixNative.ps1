@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $graphixRoot = Split-Path -Parent $PSScriptRoot
+& (Join-Path $PSScriptRoot 'Test-GraphixReleaseDocumentation.ps1') -PackageVersion $PackageVersion
 $nativeRoot = Join-Path $graphixRoot "out/graphix/$PackageVersion"
 $packageRoot = Join-Path $graphixRoot 'out/packages'
 $packagePath = Join-Path $packageRoot "Graphix.Native.$PackageVersion.nupkg"

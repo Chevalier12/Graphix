@@ -7,7 +7,7 @@ on:
       package_version:
         description: New Graphix.Native prerelease version
         required: true
-        default: 3.4.16-graphix.1
+        default: 3.4.16-graphix.3
         type: string
 
 permissions:
@@ -47,6 +47,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Verify public package documentation
+        run: ./build-scripts/Test-GraphixReleaseDocumentation.ps1 -PackageVersion $env:PACKAGE_VERSION
       - name: Install Linux development dependencies
         if: runner.os == 'Linux'
         shell: bash
