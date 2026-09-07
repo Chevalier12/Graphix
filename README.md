@@ -33,10 +33,26 @@ contributions to Graphix.
 - Upstream history and tags are retained. Updates are deliberate and versioned,
   not automatic tracking of SDL's development branch.
 
-Graphix adds a versioned native-only NuGet build recipe and an explicit
-six-RID GitHub Actions workflow. The window-sizing defect remains unfixed.
-No NuGet publication or complete cross-platform certification is claimed.
+Graphix adds a versioned native-only NuGet build recipe, an explicit
+six-RID GitHub Actions workflow and the Windows maximum-size correction.
+Build and test evidence is scoped to the recorded scenarios, not a claim of
+complete cross-platform or GPU certification.
 See [GRAPHIX.md](GRAPHIX.md) for the change record and verification status.
+
+## Install the native runtime
+
+The public package feed is [NuGet.org](https://www.nuget.org/packages/Graphix.Native/3.4.16-graphix.3):
+
+```powershell
+dotnet add package Graphix.Native --version 3.4.16-graphix.3
+```
+
+This prerelease package contains Windows, Linux and macOS native assets for
+x64 and ARM64. It provides no managed API. C# applications can use the separate
+[Graphix-CS 3.4.16.1 binding](https://www.nuget.org/packages/Graphix-CS/3.4.16.1).
+Do not combine Graphix.Native with another package supplying the same SDL3
+native libraries. Normal restore needs no GitHub authentication, Actions
+artifact download or local package feed.
 
 ## Building
 
@@ -49,6 +65,9 @@ For versioned native artifacts, use the
 The manually dispatched `Graphix native packages` workflow builds and tests
 Windows, Linux and macOS on x64 and ARM64, then assembles a NuGet artifact only
 if all six jobs pass. It does not publish packages or create GitHub releases.
+Public NuGet publication is a separate, explicitly authorized step using the
+exact verified artifact. CI artifact retention does not limit the public
+package feed. Never replace the contents of an already-used package version.
 
 ## License and provenance
 

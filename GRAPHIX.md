@@ -193,3 +193,25 @@ the full suite but passed focused, and a multisampled text/stroke rendering
 comparison differs by 47/255 with Graphix 3.4.16 while passing with SDL 3.4.14.
 These findings are being investigated separately, not attributed to this
 window fix or waived. These Graphix changes were prepared with AI assistance.
+
+## 2026-09-07: public NuGet distribution preparation
+
+Prepared the first public NuGet release as `Graphix.Native 3.4.16-graphix.3`,
+with the separate managed binding `Graphix-CS 3.4.16.1`. The entry-point READMEs
+now describe direct NuGet.org installation instead of requiring temporary
+Actions artifacts. The package workflow remains build/test-only; publication
+is a separate, explicitly authorized operation on the exact verified package.
+
+This release preparation changes documentation and packaging checks, not the
+native implementation, headers or tests from `0c23f43af6884849165ebf21ba1d14fa2d6cdf51`.
+The old package versions are not overwritten. Native builds are
+repeated because runtime provenance records the new package version and the
+release source commit.
+
+A permanent documentation check rejected the previous README for lacking the
+public package URL and pinned installation command, then passed with the new
+documentation. It runs before each CI native build and during direct package
+assembly. Six matching-RID builds, all six CTest suites and both real Windows
+maximum-size regression runs remain mandatory before publication. This entry
+records release preparation, not a completed publication or new runtime test
+results. These changes were prepared with AI assistance.
