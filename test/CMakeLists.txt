@@ -378,9 +378,20 @@ add_sdl_test_executable(testgeometry TESTUTILS SOURCES testgeometry.c)
 add_sdl_test_executable(testgl SOURCES testgl.c)
 add_sdl_test_executable(testgles SOURCES testgles.c)
 add_sdl_test_executable(testgpu_simple_clear SOURCES testgpu_simple_clear.c)
+if(WINDOWS AND SDL_GPU_D3D12)
+    # Graphix: opt in on hosts with D3D12 and the Windows Graphics Tools debug layer.
+    option(SDLTEST_D3D12 "Run native D3D12 descriptor validation/readback tests with CTest" OFF)
+    add_sdl_test_executable(testgpu_d3d12_descriptors NOTRACKMEM NONINTERACTIVE_TIMEOUT 60 SOURCES testgpu_d3d12_descriptors.c)
+    set_property(TARGET testgpu_d3d12_descriptors PROPERTY SDL_NONINTERACTIVE ${SDLTEST_D3D12})
+    target_include_directories(testgpu_d3d12_descriptors PRIVATE "${SDL3_SOURCE_DIR}/src/video/directx")
+    target_link_libraries(testgpu_d3d12_descriptors PRIVATE d3d12 dxgi d3dcompiler)
+endif()
 add_sdl_test_executable(testgpu_spinning_cube SOURCES testgpu_spinning_cube.c ${icon_png_header} DEPENDS generate-icon_png_header)
 add_sdl_test_executable(testgpurender_effects MAIN_CALLBACKS NEEDS_RESOURCES TESTUTILS SOURCES testgpurender_effects.c)
 add_sdl_test_executable(testgpurender_msdf MAIN_CALLBACKS NEEDS_RESOURCES TESTUTILS SOURCES testgpurender_msdf.c)
+option(SDLTEST_GPU_RENDERER "Run offscreen GPU renderer texture contract tests with CTest" OFF)
+add_sdl_test_executable(testgpurender_texture_contracts NOTRACKMEM NONINTERACTIVE_TIMEOUT 60 SOURCES testgpurender_texture_contracts.c)
+set_property(TARGET testgpurender_texture_contracts PROPERTY SDL_NONINTERACTIVE ${SDLTEST_GPU_RENDERER})
 if(ANDROID)
     target_link_libraries(testgles PRIVATE GLESv1_CM)
 elseif(IOS OR TVOS)
@@ -678,6 +689,21 @@ endfunction()
 foreach(TARGET ${SDL_TEST_EXECUTABLES})
     add_sdl_test(${TARGET} ${TARGET} INSTALL)
 endforeach()
+
+if(TARGET testgpu_d3d12_descriptors AND SDLTEST_D3D12)
+    set_tests_properties(testgpu_d3d12_descriptors PROPERTIES
+        LABELS "GPU;D3D12"
+        ENVIRONMENT "SDL_VIDEO_DRIVER=windows;SDL_AUDIO_DRIVER=dummy;SDL_ASSERT=abort"
+    )
+endif()
+
+if(SDLTEST_GPU_RENDERER)
+    set_tests_properties(testgpurender_texture_contracts PROPERTIES
+        LABELS "GPU;Renderer"
+        # Use the real platform video driver, not the ordinary dummy-driver suite.
+        ENVIRONMENT "SDL_AUDIO_DRIVER=dummy;SDL_ASSERT=abort"
+    )
+endif()
 
 if(NOT EMSCRIPTEN)
     add_sdl_test(testautomation-no-simd testautomation)

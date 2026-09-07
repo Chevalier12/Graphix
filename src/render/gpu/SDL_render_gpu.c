@@ -315,12 +315,12 @@ static bool GPU_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture, SDL_
         if (texture->format == SDL_PIXELFORMAT_NV12 ||
             texture->format == SDL_PIXELFORMAT_NV21 ||
             texture->format == SDL_PIXELFORMAT_P010) {
-            // Need to add size for the U/V plane
-            size += 2 * ((texture->h + 1) / 2) * ((data->pitch + 1) / 2);
+            // Round the chroma width in pixels before converting to bytes (P010 uses 16-bit components).
+            size_t chroma_pitch = (size_t)((texture->w + 1) / 2) * 2 * SDL_BYTESPERPIXEL(texture->format);
+            size += ((texture->h + 1) / 2) * chroma_pitch;
         }
         data->pixels = SDL_calloc(1, size);
         if (!data->pixels) {
-            SDL_free(data);
             return false;
         }
 
@@ -383,7 +383,7 @@ static bool GPU_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture, SDL_
                 return false;
             }
         }
-        SDL_SetPointerProperty(props, SDL_PROP_TEXTURE_GPU_TEXTURE_V_POINTER, data->textureU);
+        SDL_SetPointerProperty(props, SDL_PROP_TEXTURE_GPU_TEXTURE_V_POINTER, data->textureV);
 
         data->YCbCr_matrix = SDL_GetYCbCRtoRGBConversionMatrix(texture->colorspace, texture->w, texture->h, 8);
         if (!data->YCbCr_matrix) {

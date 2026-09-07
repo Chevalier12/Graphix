@@ -215,3 +215,166 @@ assembly. Six matching-RID builds, all six CTest suites and both real Windows
 maximum-size regression runs remain mandatory before publication. This entry
 records release preparation, not a completed publication or new runtime test
 results. These changes were prepared with AI assistance.
+
+## 2026-09-07: D3D12 descriptor heap capacity and binding lifetime
+
+The new native `testgpu_d3d12_descriptors` regression reproduced two violations
+on the pre-fix native source at `0c23f43af6884849165ebf21ba1d14fa2d6cdf51`:
+
+- Three fragment samplers, with an actual texture binding changed on every
+  draw: 682 draws passed with the expected pixel; draw 683 attempted to copy
+  descriptor entries 2046 through 2048 into a 2048-entry sampler heap.
+  D3D12 validation reported error 646 (`CopyDescriptorsSimple`, invalid
+  destination descriptor handle), and the process exited with code 2173.
+  The corresponding compute workload failed at dispatch 683 as well.
+- Replacing a full heap left unchanged descriptor tables pointing into the
+  previous heap. D3D12 reported error 554 at graphics draw 2048 when a vertex
+  sampler stayed bound, and at compute dispatch 2049 when the output binding
+  stayed bound. A three-storage-buffer graphics workload also overflowed the
+  65536-entry view heap at draw 21846; its compute counterpart retained an
+  invalid output table at dispatch 21846.
+
+The fix reserves space for all pending descriptor tables before binding any
+table for a draw or dispatch. Heap replacement marks graphics and compute
+descriptor tables dirty, including unchanged resources. Compute read-write
+tables are now bound at dispatch alongside the other resources, using the
+pipeline's declared resource counts. Heap sizes and in-flight resource
+lifetimes are unchanged. There is no public C API or header change.
+
+The permanent C test uses public SDL GPU operations, in-memory DXBC shader
+compilation with the Windows SDK compiler, native D3D12 validation, and GPU
+readback. Its seven scenarios cover sampler/view capacity, retained vertex
+bindings, compute output buffers and compute output textures. Each scenario
+runs three times with the same device/resources to exercise command-buffer
+and heap reuse. Compute dispatches write disjoint output elements, avoiding
+unsynchronized overlapping writes. Missing GPU/debug-layer prerequisites
+fail the test; they do not count as a pass.
+
+Local verification: Windows x64, NVIDIA GeForce RTX 2060, driver
+32.0.15.9159, MSVC 19.51, shared SDL with static CRT:
+
+- All seven final scenarios fail on the preserved pre-fix DLL with the
+  corresponding descriptor validation errors. The 682-draw control passes.
+- Release build with warnings as errors passed. Full CTest with
+  `SDL_TESTS_QUICK=1` and the native GPU test enabled: 26/26 passed, 63.03 s.
+- The seven-scenario, three-iteration GPU matrix passed in both Release and
+  Debug; the focused Debug CTest run took 5.75 s.
+- The original 682- and 683-draw boundary runs passed three times each after
+  the fix, with expected pixels and no D3D12 validation errors.
+- The complete Render automation suite, with `SDL_RENDER_DRIVER=gpu` and
+  `SDL_GPU_DRIVER=direct3d12`, passed 19/19 with seed `GRAPHIXD3D12DESCR`.
+- The native Windows maximum-size regression still passed all 400 assertions.
+- DLL export comparison: the same 1271 exported names. Public headers and
+  dynamic API declarations are unchanged. Git whitespace checks passed.
+
+A diagnostic recording comparison also passed on both DLLs: 600 operations
+per scenario, 20 iterations, discarding the first two timing samples. Timings
+include the debug layer and message inspection and are not production frame
+cost or GPU-time benchmarks; no performance improvement is claimed.
+
+Logs, binary/source hashes and preserved baseline artifacts are under the
+local ignored directory `out/evidence/d3d12-descriptors/`. These are local
+verification artifacts, not a published runtime package. Native ARM64,
+other GPUs, other D3D12 platforms and downstream Cerneala conformance have
+not been verified for this change. No cross-platform certification or human
+manual validation is claimed. These changes were prepared with AI assistance.
+
+### Running the native descriptor regression
+
+The executable is built with the Windows D3D12 test targets. CTest registration
+is opt-in with `SDLTEST_D3D12=ON`, because ordinary headless test hosts need not
+have a D3D12 device or the Windows Graphics Tools debug layer. The existing
+package workflow has not been changed to require GPU-equipped runners.
+
+From a shell with CMake and the Windows C/C++ toolchain available:
+
+```powershell
+cmake -S . -B out/build/d3d12-descriptors -DSDL_TESTS=ON -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDLTEST_D3D12=ON -DSDL_WERROR=ON
+cmake --build out/build/d3d12-descriptors --config Release --parallel 8
+ctest --test-dir out/build/d3d12-descriptors -C Release -R '^testgpu_d3d12_descriptors$' --output-on-failure --no-tests=error
+```
+
+The executable also accepts `--case NAME`, `--draws N` and `--iterations N`.
+For a direct run, put the build's `Release` directory on `PATH` so the test
+loads that build's SDL3 DLL. The original sampler boundary is:
+
+```powershell
+./out/build/d3d12-descriptors/test/Release/testgpu_d3d12_descriptors.exe --case graphics-samplers --draws 683
+```
+
+## 2026-09-07: GPU renderer texture storage, cleanup and plane properties
+
+Three additional defects were reproduced through public SDL APIs before any
+production changes. The permanent `testgpurender_texture_contracts` regression
+was then confirmed RED against the preserved pre-fix DLL:
+
+- P010 streaming textures with odd widths allocated too little chroma storage.
+  A 3x16 texture reported pitch 6 and allocated 144 bytes, while upload required
+  160. The original protected-memory diagnostic detected a read at the end of
+  that allocation during unlock. The permanent test checks the actual requested
+  allocation size before writing or uploading, so RED does not require an
+  invalid memory access. Five odd-sized cases fail; the even-width control and
+  the corresponding NV12, NV21 and RGBA32 cases pass.
+- Failure of the 32092-byte pixel allocation for a 113x71 RGBA32 streaming
+  texture caused the backend structure to be freed twice. The native test
+  injects exactly one allocation failure and temporarily defers reclamation
+  to detect repeated frees deterministically. Creation without injection
+  succeeds; creation with injection returns NULL but repeats a free before
+  the fix.
+- The exposed V-plane property returned the U-plane texture. Both IYUV and
+  YV12 fail, with both renderer-owned planes and distinct external planes
+  wrapped through texture creation properties.
+
+The fixes are confined to `src/render/gpu/SDL_render_gpu.c`: round chroma width
+in pixels before converting it to bytes, leave failure cleanup to the existing
+`SDL_DestroyTexture` owner, and publish `textureV` for the V-plane property.
+The public pitch, API and resource ownership contracts are unchanged. The
+earlier D3D12 descriptor fix is unchanged.
+
+The permanent regression runs 24 streaming format/size combinations, the
+allocation-failure case with its control, and four plane-identity cases. It
+repeats the matrix three times on the same device and renderer. After checking
+storage bounds it initializes the locked pixels, unlocks and submits through
+the renderer, then verifies every uploaded plane byte using GPU readback.
+Missing devices or other setup failures fail the executable; they are not
+counted as successful or skipped tests. No production test hooks were added.
+
+Local verification: Windows x64, NVIDIA RTX 2060, MSVC 19.51, shared SDL with
+static CRT and warnings as errors:
+
+- Final permanent test against the preserved pre-fix DLL, on both D3D12 and
+  Vulkan: 30 contract assertion failures and 117 passing assertions per run.
+- Fixed Release and Debug DLLs, on both D3D12 and Vulkan: 162/162 assertions
+  passed per run, including the original 3x16 P010 dimensions.
+- Full Release build passed. Final CTest with `SDL_TESTS_QUICK=1` and both
+  opt-in GPU tests enabled: 27/27 passed in 67.86 seconds.
+- Focused Debug CTest for the renderer and descriptor regressions: 2/2 passed.
+- Full native Render automation suite with seed `GRAPHIXGPUTEXTURE`: 19/19
+  passed on D3D12 and 19/19 on Vulkan. These runs did not use quick mode.
+- The native Windows maximum-size regression still passed 400/400 assertions.
+- All 1271 DLL export names match the pre-fix DLL, including `JNI_OnLoad`.
+  Public headers and dynamic API declarations are unchanged; whitespace
+  checks passed.
+
+The test executable is portable SDL C code. CTest registration is opt-in with
+`SDLTEST_GPU_RENDERER=ON`, so ordinary headless package jobs do not acquire a
+new GPU requirement. It uses the real platform video driver, rather than the
+ordinary suite's dummy driver. From a configured native build:
+
+```powershell
+cmake -S . -B out/build/d3d12-descriptors -DSDL_TESTS=ON -DSDLTEST_GPU_RENDERER=ON
+cmake --build out/build/d3d12-descriptors --config Release --parallel 8
+ctest --test-dir out/build/d3d12-descriptors -C Release -R '^testgpurender_texture_contracts$' --output-on-failure --no-tests=error
+```
+
+For direct runs, put the matching build's DLL directory on `PATH`. The executable
+accepts `--driver direct3d12` or `--driver vulkan`, `--case streaming`,
+`--case allocation-failure`, `--case properties`, and `--iterations 1..100`.
+
+Logs, baseline artifacts and source/binary hashes are retained locally under
+`out/evidence/gpu-renderer-fixes/`; the earlier diagnostic findings remain under
+`out/evidence/gpu-renderer-audit/`. No runtime package was assembled or published
+for these changes. ARM64, non-Windows platforms, other GPUs, Metal and downstream
+Cerneala conformance remain unverified. No production performance benchmark or
+human manual validation is claimed. These changes were prepared with AI
+assistance.

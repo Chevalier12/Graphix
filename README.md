@@ -11,10 +11,6 @@ the original SDL software.
 
 ## Why this fork exists
 
-During Cerneala development, we reproduced a Windows window-sizing defect in
-SDL 3.4.14 and 3.4.16: a finite maximum width or height is ignored during native
-maximization when the other dimension is unlimited.
-
 Our development workflow includes AI-assisted engineering. SDL's upstream
 [contribution policy at our starting release](https://github.com/libsdl-org/SDL/blob/release-3.4.16/AGENTS.md)
 does not accept that workflow for upstream contributions. We therefore maintain
