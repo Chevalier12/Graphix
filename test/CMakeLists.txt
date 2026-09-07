@@ -466,6 +466,7 @@ add_sdl_test_executable(testtray NEEDS_RESOURCES TESTUTILS SOURCES testtray.c)
 
 add_sdl_test_executable(testprocess
     NONINTERACTIVE THREADS
+    NONINTERACTIVE_TIMEOUT 30
     NONINTERACTIVE_ARGS $<TARGET_FILE:childprocess>
     INSTALLED_ARGS "${CMAKE_INSTALL_FULL_LIBEXECDIR}/installed-tests/SDL3/childprocess${CMAKE_EXECUTABLE_SUFFIX}"
     SOURCES testprocess.c

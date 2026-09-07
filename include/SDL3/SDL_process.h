@@ -80,7 +80,8 @@ typedef struct SDL_Process SDL_Process;
  * will allow the use of SDL_ReadProcess() or SDL_GetProcessInput() and
  * SDL_GetProcessOutput().
  *
- * See SDL_CreateProcessWithProperties() for more details.
+ * See SDL_CreateProcessWithProperties() for more details, including Graphix's
+ * Windows argument-list restrictions for executable paths and batch/cmd calls.
  *
  * \param args the path and arguments for the new process.
  * \param pipe_stdio true to create pipes to the process's standard input and
@@ -162,7 +163,8 @@ typedef enum SDL_ProcessIO
  *
  * - `SDL_PROP_PROCESS_CREATE_ARGS_POINTER`: an array of strings containing
  *   the program to run, any arguments, and a NULL pointer, e.g. const char
- *   *args[] = { "myprogram", "argument", NULL }. This is a required property.
+ *   *args[] = { "myprogram", "argument", NULL }. This is required unless a
+ *   non-empty `SDL_PROP_PROCESS_CREATE_CMDLINE_STRING` is supplied on Windows.
  * - `SDL_PROP_PROCESS_CREATE_ENVIRONMENT_POINTER`: an SDL_Environment
  *   pointer. If this property is set, it will be the entire environment for
  *   the process, otherwise the current environment is used.
@@ -201,6 +203,38 @@ typedef enum SDL_ProcessIO
  *   property is only important if you want to start programs that does
  *   non-standard command-line processing, and in most cases using
  *   `SDL_PROP_PROCESS_CREATE_ARGS_POINTER` is sufficient.
+ *
+ * On Windows, Graphix treats the argument list as literal arguments, not a
+ * shell command string. Supply the executable path without surrounding quotes.
+ * Empty executable paths, paths containing double quotes, and paths ending in
+ * whitespace or a dot are rejected before launch. Native executable arguments
+ * use Windows argument quoting, including complete runs of backslashes before
+ * a double quote or the closing quote.
+ *
+ * For a `.bat` or `.cmd` program, or a program whose filename is `cmd` or
+ * `cmd.exe` (case-insensitive), every argument, including the program path,
+ * must be free of percent signs, exclamation marks, carriage returns, line
+ * feeds and double quotes. These inputs are rejected rather than expanded or
+ * escaped through an assumed number of shell parsing passes. The restriction
+ * does not apply to arguments of ordinary native executables.
+ *
+ * Batch files are launched through the system directory's cmd.exe with AutoRun
+ * and delayed expansion disabled. Explicit cmd invocations also disable
+ * AutoRun. Before the command, cmd switches must be separate arguments: `/d`,
+ * `/s`, `/q`, `/a`, `/u`, `/?`, `/e:on`, `/e:off`, `/f:on`, `/f:off`, `/v:on`,
+ * `/v:off`, or `/t:HH` with two hexadecimal digits. A separate `/c` or `/k`
+ * must be followed by a separate executable path; subsequent entries are that
+ * program's arguments. Switch matching is case-insensitive. Combined switches
+ * and embedded command strings are not accepted by this argument-list path.
+ *
+ * These validation failures return NULL with an explanation in SDL_GetError()
+ * before creating a child process. Callers needing shell built-ins, command
+ * operators or other shell syntax must explicitly use
+ * `SDL_PROP_PROCESS_CREATE_CMDLINE_STRING`. On Windows this property takes
+ * precedence over the argument list and bypasses its quoting and validation;
+ * the caller is responsible for its command syntax and untrusted input.
+ * Argument quoting is not a sandbox: the caller is also responsible for the
+ * selected executable or script and how it interprets its arguments.
  *
  * On POSIX platforms, wait() and waitpid(-1, ...) should not be called, and
  * SIGCHLD should not be ignored or handled because those would prevent SDL

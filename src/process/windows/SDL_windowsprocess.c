@@ -95,119 +95,186 @@ static bool is_batch_file_path(const char *path) {
     return false;
 }
 
-static bool join_arguments(const char * const *args, LPWSTR *args_out)
+/* Graphix #2 / SDL #16217: argv is data, not an unescaped shell command.
+ * CMDLINE_STRING deliberately bypasses this strict argument-list path. */
+static bool is_cmd_path(const char *path)
 {
-    size_t len;
-    int i;
-    size_t i_out;
-    char *result;
-    bool batch_file = is_batch_file_path(args[0]);
-
-    len = 0;
-    for (i = 0; args[i]; i++) {
-        const char *a = args[i];
-        bool quotes = *a == '\0' || SDL_strpbrk(a, " \r\n\t\v") != NULL;
-
-        if (quotes) {
-            /* surround the argument with double quote if it is empty or contains whitespaces */
-            len += 2;
+    const char *name = path;
+    for (; *path; path++) {
+        if (*path == '\\' || *path == '/' || *path == ':') {
+            name = path + 1;
         }
-
-        for (; *a; a++) {
-            switch (*a) {
-            case '"':
-                len += 2;
-                break;
-            case '\\':
-                /* only escape backslashes that precede a double quote (including the enclosing double quote) */
-                len += (a[1] == '"' || (quotes && a[1] == '\0')) ? 2 : 1;
-                break;
-            case ' ':
-            case '^':
-            case '&':
-            case '|':
-            case '<':
-            case '>':
-                if (batch_file) {
-                    len += 2;
-                } else {
-                    len += 1;
-                }
-                break;
-            default:
-                len += 1;
-                break;
-            }
-        }
-        /* space separator or final '\0' */
-        len += 1;
     }
+    return SDL_strcasecmp(name, "cmd") == 0 || SDL_strcasecmp(name, "cmd.exe") == 0;
+}
 
-    result = SDL_malloc(len);
-    if (!result) {
-        *args_out = NULL;
-        return false;
+static bool validate_program_path(const char *path)
+{
+    size_t len = SDL_strlen(path);
+    if (!len || SDL_strchr(path, '"')) {
+        return SDL_SetError("Windows process arguments: invalid executable path");
     }
-
-    i_out = 0;
-    for (i = 0; args[i]; i++) {
-        const char *a = args[i];
-        bool quotes = *a == '\0' || SDL_strpbrk(a, " \r\n\t\v") != NULL;
-
-        if (quotes) {
-            result[i_out++] = '"';
-        }
-        for (; *a; a++) {
-            switch (*a) {
-            case '"':
-                if (batch_file) {
-                    result[i_out++] = '"';
-                } else {
-                    result[i_out++] = '\\';
-                }
-                result[i_out++] = *a;
-                break;
-            case '\\':
-                result[i_out++] = *a;
-                if (a[1] == '"' || (quotes && a[1] == '\0')) {
-                    result[i_out++] = *a;
-                }
-                break;
-            case ' ':
-                if (batch_file) {
-                    result[i_out++] = '^';
-                }
-                result[i_out++] = *a;
-                break;
-            case '^':
-            case '&':
-            case '|':
-            case '<':
-            case '>':
-                if (batch_file) {
-                    result[i_out++] = '^';
-                }
-                result[i_out++] = *a;
-                break;
-            default:
-                result[i_out++] = *a;
-                break;
-            }
-        }
-        if (quotes) {
-            result[i_out++] = '"';
-        }
-        result[i_out++] = ' ';
-    }
-    SDL_assert(i_out == len);
-    result[len - 1] = '\0';
-
-    *args_out = (LPWSTR)SDL_iconv_string("UTF-16LE", "UTF-8", (const char *)result, len);
-    SDL_free(result);
-    if (!args_out) {
-        return false;
+    if (path[len - 1] == '.' || SDL_isspace((unsigned char)path[len - 1])) {
+        return SDL_SetError("Windows process arguments: executable path ends in whitespace or a dot");
     }
     return true;
+}
+
+/* Accept separate, documented cmd switches only. Combined switches or an
+ * embedded command string would evade the /c and /k argument boundary. */
+static bool is_cmd_option(const char *arg)
+{
+    static const char *const options[] = {
+        "/d", "/s", "/q", "/a", "/u", "/?", "/e:on", "/e:off",
+        "/f:on", "/f:off", "/v:on", "/v:off"
+    };
+    size_t i;
+    for (i = 0; i < SDL_arraysize(options); i++) {
+        if (SDL_strcasecmp(arg, options[i]) == 0) {
+            return true;
+        }
+    }
+    return SDL_strlen(arg) == 5 && SDL_strncasecmp(arg, "/t:", 3) == 0 &&
+           SDL_isxdigit((unsigned char)arg[3]) && SDL_isxdigit((unsigned char)arg[4]);
+}
+
+/* The caller reserves at least twice the input length plus two quotes.
+ * Executable names use Windows' argv[0] rules, not CRT argument escaping. */
+static char *quote_argument(char *out, const char *arg, bool shell, bool program)
+{
+    bool quotes = program || !*arg ||
+                  SDL_strpbrk(arg, shell ? " \t\v\f\"<>&|()[]{}^=;'+,\x60~" : " \t\r\n\v\f\"") != NULL;
+    if (quotes) {
+        *out++ = '"';
+    }
+    if (program) {
+        size_t len = SDL_strlen(arg);
+        SDL_memcpy(out, arg, len);
+        out += len;
+    } else {
+        while (*arg) {
+            if (*arg == '\\') {
+                size_t count = 0;
+                while (arg[count] == '\\') {
+                    count++;
+                }
+                arg += count;
+                if (*arg == '"' || (!*arg && quotes)) {
+                    count *= 2;
+                }
+                while (count--) {
+                    *out++ = '\\';
+                }
+            } else if (*arg == '"') {
+                /* Literal quotes are accepted only for non-shell arguments. */
+                SDL_assert(!shell);
+                *out++ = '\\';
+                *out++ = *arg++;
+            } else {
+                *out++ = *arg++;
+            }
+        }
+    }
+    if (quotes) {
+        *out++ = '"';
+    }
+    return out;
+}
+
+static bool join_arguments(const char * const *args, LPWSTR *args_out)
+{
+    bool batch_file = is_batch_file_path(args[0]);
+    bool cmd = is_cmd_path(args[0]);
+    bool shell = batch_file || cmd;
+    size_t command_switch = 0;
+    size_t capacity = sizeof(" /d /s /v:off /c \"\"") + 2;
+    size_t i;
+    char *shell_path = NULL;
+    char *result;
+    char *out;
+
+    *args_out = NULL;
+    if (!validate_program_path(args[0])) {
+        return false;
+    }
+    for (i = 0; args[i]; i++) {
+        size_t extra;
+        if (shell && SDL_strpbrk(args[i], "%!\r\n\"")) {
+            return SDL_SetError("Windows process arguments: batch/cmd arguments cannot contain %%, !, CR, LF or double quotes (argument %u)", (unsigned)i);
+        }
+        if (cmd && i > 0 && !command_switch) {
+            if (SDL_strcasecmp(args[i], "/c") == 0 || SDL_strcasecmp(args[i], "/k") == 0) {
+                command_switch = i;
+                if (!args[i + 1] || !validate_program_path(args[i + 1])) {
+                    return SDL_SetError("Windows process arguments: /c or /k requires a separate, valid executable path");
+                }
+            } else if (!is_cmd_option(args[i])) {
+                return SDL_SetError("Windows process arguments: unsupported cmd option; use separate switches or an explicit command line");
+            }
+        }
+        if (!SDL_size_mul_check_overflow(SDL_strlen(args[i]), 2, &extra) ||
+            !SDL_size_add_check_overflow(extra, 3, &extra) ||
+            !SDL_size_add_check_overflow(capacity, extra, &capacity)) {
+            return SDL_SetError("Windows process arguments: command line is too large");
+        }
+    }
+
+    if (batch_file) {
+        WCHAR system_path[MAX_PATH];
+        UINT length = GetSystemDirectoryW(system_path, SDL_arraysize(system_path));
+        if (!length) {
+            return WIN_SetError("GetSystemDirectoryW");
+        }
+        if (length > SDL_arraysize(system_path) - SDL_arraysize(L"\\cmd.exe")) {
+            return SDL_SetError("Windows process arguments: system directory is too long");
+        }
+        SDL_wcslcat(system_path, L"\\cmd.exe", SDL_arraysize(system_path));
+        shell_path = WIN_StringToUTF8W(system_path);
+        if (!shell_path) {
+            return false;
+        }
+        if (!SDL_size_add_check_overflow(capacity, SDL_strlen(shell_path) + 2, &capacity)) {
+            SDL_free(shell_path);
+            return SDL_SetError("Windows process arguments: command line is too large");
+        }
+    }
+
+    result = SDL_malloc(capacity);
+    if (!result) {
+        SDL_free(shell_path);
+        return false;
+    }
+    out = result;
+    if (batch_file) {
+        /* Use the system interpreter, not COMSPEC or a PATH/current-directory
+         * cmd.exe. Disable AutoRun and delayed expansion for this launch. */
+        out = quote_argument(out, shell_path, false, true);
+        SDL_free(shell_path);
+        SDL_memcpy(out, " /d /s /v:off /c \"", sizeof(" /d /s /v:off /c \"") - 1);
+        out += sizeof(" /d /s /v:off /c \"") - 1;
+    }
+    for (i = 0; args[i]; i++) {
+        if (i && !(command_switch && i == command_switch + 1)) {
+            *out++ = ' ';
+        }
+        out = quote_argument(out, args[i], shell, i == 0 || (cmd && i == command_switch + 1 && command_switch));
+        if (cmd && i == 0) {
+            SDL_memcpy(out, " /d /s", sizeof(" /d /s") - 1);
+            out += sizeof(" /d /s") - 1;
+        }
+        if (command_switch && i == command_switch) {
+            *out++ = ' ';
+            *out++ = '"';
+        }
+    }
+    if (batch_file || command_switch) {
+        *out++ = '"';
+    }
+    *out++ = '\0';
+    SDL_assert((size_t)(out - result) <= capacity);
+    *args_out = WIN_UTF8ToStringW(result);
+    SDL_free(result);
+    return *args_out != NULL;
 }
 
 static bool join_env(char **env, LPWSTR *env_out)

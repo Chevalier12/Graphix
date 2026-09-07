@@ -378,3 +378,146 @@ for these changes. ARM64, non-Windows platforms, other GPUs, Metal and downstrea
 Cerneala conformance remain unverified. No production performance benchmark or
 human manual validation is claimed. These changes were prepared with AI
 assistance.
+
+## 2026-09-07: RED gate for process argument escaping (Graphix #2)
+
+Added `process_testArgumentsBackslashQuote` in `test/testprocess.c` for the
+first case in [Graphix #2](https://github.com/Chevalier12/Graphix/issues/2)
+([SDL #16217](https://github.com/libsdl-org/SDL/issues/16217)). It launches the
+existing childprocess executable through SDL_CreateProcess, with zero, one
+and two literal backslashes before a double quote, followed by a separate
+`baz` argument. The first two cases are controls. Exact output length and
+bytes verify both argument contents and boundaries; successful launch, read
+and child exit are checked separately.
+
+On Windows x64, the two-backslash case loses the quote and merges the two
+arguments. Expected and actual child stdout, with literal backslashes:
+
+```text
+Expected:
+|0=foo\\"bar|
+|1=baz|
+
+Actual:
+|0=foo\\bar baz|
+```
+
+The lines end in CRLF: 24 expected bytes versus 18 actual bytes. Launching
+the same unchanged child with .NET ProcessStartInfo.ArgumentList (no shell)
+preserves all 24 bytes. This control distinguishes the SDL launch path from
+a broken argument-printing fixture. The Windows argument joiner currently
+escapes only the final backslash of a run before a quote; the
+[Microsoft C runtime rules](https://learn.microsoft.com/en-us/cpp/c-language/parsing-c-command-line-arguments)
+interpret the complete run.
+
+Evidence on source commit `7078ad0d1891810b624da8ad18f271a60648c626`, with
+only this test added, using MSVC 19.51, Release shared SDL, static CRT and
+warnings as errors:
+
+- Existing process CTest passed before adding the regression.
+- The focused regression failed identically in three iterations with seed
+  `GRAPHIXISSUE0002`: 11 passing assertions and one failing assertion per
+  iteration; executable exit code 1.
+- Full Release build passed. Full CTest with SDL_TESTS_QUICK=1 and both
+  existing opt-in GPU tests enabled: 26/27 passed in 63.25 seconds.
+  Only testprocess failed, solely in the new regression; its other 15
+  cases passed, with no skips. CTest returned 8.
+- Production DLL and childprocess hashes stayed identical before and after
+  adding the test. No production source, helper executable source or API
+  was modified.
+
+From the existing configured build, with CMake/CTest on PATH:
+
+```powershell
+cmake --build out/build/d3d12-descriptors --config Release --target testprocess --parallel 8
+ctest --test-dir out/build/d3d12-descriptors -C Release -R '^testprocess$' --output-on-failure --no-tests=error
+```
+
+The new case is enabled in the existing process suite: no expected-failure
+inversion or CI bypass was added. Direct focused runs use
+`--filter process_testArgumentsBackslashQuote --seed GRAPHIXISSUE0002 --iterations 3`;
+put the matching DLL directory on PATH and pass the matching childprocess
+path as the positional argument.
+
+Logs, JUnit results, the independent control and source/binary provenance
+are retained locally under `out/evidence/process-arguments/`.
+This is deliberately a RED-only change. It does not reproduce the other
+seven reported cases, demonstrate command injection, or verify ARM64,
+other operating systems or human interaction. No fix, package, commit or
+GitHub issue update was performed. These additions were prepared with AI
+assistance.
+
+### Expanded issue investigation (historical, before quote-policy approval)
+
+The maintainer subsequently requested all eight points and approved rejecting
+percent, exclamation mark, CR and LF in batch/cmd argument lists, and trailing
+spaces/dots in executable paths, while preserving the explicit raw command-line
+path. Four further permanent process tests now reproduce the batch filename,
+batch argument, executable selection, shell rejection and direct cmd cases.
+Fixtures use private directories, copies of the benign childprocess helper,
+launch-marker files and harmless echo controls; cleanup assertions pass.
+
+All five focused tests are RED on the unchanged production implementation.
+The raw command-line control passes. A first correction fixed the native
+argument, executable boundary and rejection tests, but failed quote-containing
+shell arguments. An independent native probe established that doubled quotes
+are interpreted differently by the CRT and CommandLineToArgvW (used by SDL).
+Caret escaping worked through a single batch forwarding step, but forwarding
+through a second batch caused the benign echo control to execute instead of
+remaining argument data. This is not a safe general replacement.
+
+The candidate production change was discarded and the original implementation
+rebuilt. The expanded tests remain, with evidence and the discarded patch under
+`out/evidence/process-arguments/full-issue/`. Adding literal double quotes to the
+batch/cmd rejection policy requires a further maintainer decision. No completed
+fix or full-suite GREEN is claimed, and Graphix issue 2 remains open.
+
+### Correction after strict-policy approval
+
+The maintainer subsequently approved rejecting literal double quotes in the
+batch/cmd argument-list path as well. The Windows argument builder now handles
+complete backslash runs, protects the executable boundary, quotes batch paths,
+and validates the approved shell restrictions before process creation. The
+explicit raw command-line path is unchanged. This correction does not represent
+a published Graphix release or an upstream SDL fix.
+
+The permanent regression matrix covers native arguments, simple/spaced/mixed-case
+batch paths, nested batch forwarding, executable selection, synchronous shell
+rejection, direct cmd invocations and the original BatBadBut payload. The same
+tests were RED against the retained original DLL before the production change.
+All six focused cases subsequently passed three iterations each with seed
+`GRAPHIXISSUE0002`.
+
+Windows x64 verification:
+
+- The complete Release CTest suite passed 27/27, including both enabled GPU tests
+  (final code/test matrix: 70.53 seconds; process suite: 7.33 seconds).
+- The Debug process suite passed 20/20 with `--trackmem --randmem` (10.6 seconds).
+  Its old 10-second CTest limit independently timed out despite passing direct
+  execution. The expanded process suite now has a 30-second timeout; Debug CTest
+  passed in 10.91 seconds afterward. No assertion or test was disabled.
+- The original and corrected Release DLLs export the same 1,270 SDL symbol names;
+  public declarations were not changed. This does not establish behavioral
+  compatibility: the approved strict shell policy is intentionally restrictive.
+- The allocation tracker reports no remaining tracked allocations, but this
+  build disables free validation and reports unknown frees. The retained original
+  DLL also reports unknown frees. These runs are not comprehensive memory-safety
+  verification or a zero-allocation claim.
+- Additional cmd option/boundary cases passed 230/230 assertions in each of three
+  iterations; the matching test executable failed 99 assertions against the
+  retained original DLL. Combined switches and missing commands are rejected;
+  separate uppercase switches preserve the literal metacharacter control.
+
+Logs, retained RED binaries and reproduction evidence are under
+`out/evidence/process-arguments/full-issue/`. ARM64, other operating systems,
+ASan and human interaction have not been validated for this correction.
+The Windows restrictions and raw command-line responsibility are documented in
+`include/SDL3/SDL_process.h`, following this repository's header/wiki rules in
+`docs/README-documentation-rules.md`. Header/wiki/header conversion preserved the
+policy and public declaration tokens. The local Cygwin Perl misparsed CRLF
+headers; a CRLF/LF control reproduced this, and the successful export used an
+LF-normalized staging copy, without modifying the script or publishing to SDL's
+wiki. All 1,270 exported SDL names and ordinals remain unchanged.
+No unrelated documentation infrastructure is required. These verification results
+were recorded before publication; commit and issue-closure references belong to
+the Graphix issue history. No package release was performed.

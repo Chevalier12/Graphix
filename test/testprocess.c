@@ -3,6 +3,7 @@
 #include <SDL3/SDL_test.h>
 
 #ifdef SDL_PLATFORM_WINDOWS
+#include <windows.h>
 #define EXE ".exe"
 #else
 #define EXE ""
@@ -127,6 +128,452 @@ failed:
     SDL_DestroyProcess(process);
     return TEST_ABORTED;
 }
+
+/* Graphix #2 / SDL #16217: preserve backslash runs before a literal quote,
+ * including the boundary between that argument and the following argument. */
+static int SDLCALL process_testArgumentsBackslashQuote(void *arg)
+{
+    TestProcessData *data = (TestProcessData *)arg;
+    static const char *const arguments[] = {
+        "foo" "\"" "bar",         /* zero backslashes: control */
+        "foo" "\\" "\"" "bar",   /* one backslash: control */
+        "foo" "\\\\" "\"" "bar", /* two backslashes: reported regression */
+        "foo" "\\\\\\" "\"" "bar",
+        "foo" "\\\\\\\\" "\"" "bar",
+        "foo bar\\\\",
+        "foo bar\\\\\\",
+        "foo bar\\\\\\\\",
+        "%GRAPHIX_EXPAND%!\r\n", /* shell restrictions must not affect executables */
+        "^&|<>()[]{}=;,+"
+    };
+    const char *process_args[] = {
+        data->childprocess_path, "--print-arguments", "--", NULL, "baz", NULL
+    };
+    int i;
+
+    for (i = 0; i < SDL_arraysize(arguments); i++) {
+        SDL_Process *process;
+        char *buffer;
+        char expected[64];
+        size_t total_read = 0;
+        size_t expected_size;
+        int exit_code = -1;
+
+        process_args[3] = arguments[i];
+        /* childprocess prints one indexed line per argument in binary mode. */
+        SDL_snprintf(expected, sizeof(expected), "|0=%s|\r\n|1=baz|\r\n", arguments[i]);
+        expected_size = SDL_strlen(expected);
+
+        process = SDL_CreateProcess(process_args, true);
+        SDLTest_AssertCheck(process != NULL, "Case %d: SDL_CreateProcess(): %s", i, SDL_GetError());
+        if (!process) {
+            return TEST_ABORTED;
+        }
+
+        buffer = (char *)SDL_ReadProcess(process, &total_read, &exit_code);
+        SDLTest_AssertCheck(buffer != NULL, "Case %d: SDL_ReadProcess(): %s", i, SDL_GetError());
+        SDLTest_AssertCheck(exit_code == 0, "Case %d: child exit code should be 0, is %d", i, exit_code);
+        SDL_DestroyProcess(process);
+        if (!buffer || exit_code != 0) {
+            SDL_free(buffer);
+            return TEST_ABORTED;
+        }
+
+        SDLTest_LogEscapedString("Expected argument output: ", expected, expected_size);
+        SDLTest_LogEscapedString("Actual argument output: ", buffer, total_read);
+        SDLTest_AssertCheck(total_read == expected_size && SDL_memcmp(buffer, expected, expected_size) == 0,
+                            "Case %d: preserve both arguments byte-for-byte (%u expected bytes, %u actual)",
+                            i, (unsigned)expected_size, (unsigned)total_read);
+        SDL_free(buffer);
+    }
+    return TEST_COMPLETED;
+}
+
+
+#ifdef SDL_PLATFORM_WINDOWS
+/* Graphix #2: isolated, disposable files; only the benign childprocess helper is
+ * executed. No registry changes, system files, or real exploit payloads. */
+typedef struct {
+    bool created;
+    char root[1024];
+    char child[1024];
+    char spaced_child[1024];
+    char batch[4][1024];
+    char marker[1024];
+    char missing[1024];
+    char ambiguous_dir[1024];
+    char ambiguous_child[1024];
+    char cmd[1024];
+} ProcessWindowsFixture;
+
+static void DestroyProcessWindowsFixture(ProcessWindowsFixture *fixture)
+{
+    int i;
+    if (!fixture->created) {
+        return;
+    }
+    SDLTest_AssertCheck(SDL_RemovePath(fixture->marker), "Remove launch marker");
+    for (i = 0; i < SDL_arraysize(fixture->batch); i++) {
+        SDLTest_AssertCheck(SDL_RemovePath(fixture->batch[i]), "Remove batch fixture %d", i);
+    }
+    SDLTest_AssertCheck(SDL_RemovePath(fixture->child), "Remove child fixture");
+    SDLTest_AssertCheck(SDL_RemovePath(fixture->spaced_child), "Remove spaced child fixture");
+    SDLTest_AssertCheck(SDL_RemovePath(fixture->ambiguous_child), "Remove ambiguous child fixture");
+    SDLTest_AssertCheck(SDL_RemovePath(fixture->ambiguous_dir), "Remove ambiguous directory");
+    SDLTest_AssertCheck(SDL_RemovePath(fixture->root), "Remove fixture directory");
+}
+
+static bool CreateProcessWindowsFixture(TestProcessData *data, ProcessWindowsFixture *fixture)
+{
+    char directory[64];
+    char *cwd = SDL_GetCurrentDirectory();
+    WCHAR system_directory[1024];
+    UINT system_length;
+    char *system_utf8;
+    int i;
+    bool result = false;
+
+    SDL_zero(*fixture);
+    if (!cwd || SDL_strlen(cwd) > 800) {
+        SDLTest_AssertCheck(false, "Obtain a current directory that fits the fixture paths");
+        SDL_free(cwd);
+        return false;
+    }
+    for (i = 0; cwd[i]; i++) {
+        if (cwd[i] == '/') {
+            cwd[i] = '\\';
+        }
+    }
+    SDL_snprintf(directory, sizeof(directory), "graphix-process-%lu-%016" SDL_PRIx64,
+                 (unsigned long)GetCurrentProcessId(), SDL_GetTicksNS());
+    SDL_snprintf(fixture->root, sizeof(fixture->root), "%s%s", cwd, directory);
+    SDL_free(cwd);
+    SDL_snprintf(fixture->child, sizeof(fixture->child), "%s\\probe.exe", fixture->root);
+    SDL_snprintf(fixture->spaced_child, sizeof(fixture->spaced_child), "%s\\probe space.exe", fixture->root);
+    SDL_snprintf(fixture->batch[0], sizeof(fixture->batch[0]), "%s\\simple.bat", fixture->root);
+    SDL_snprintf(fixture->batch[1], sizeof(fixture->batch[1]), "%s\\spaced script.bat", fixture->root);
+    SDL_snprintf(fixture->batch[2], sizeof(fixture->batch[2]), "%s\\mixed.CmD", fixture->root);
+    SDL_snprintf(fixture->batch[3], sizeof(fixture->batch[3]), "%s\\nested.bat", fixture->root);
+    SDL_snprintf(fixture->marker, sizeof(fixture->marker), "%s\\started.txt", fixture->root);
+    SDL_snprintf(fixture->missing, sizeof(fixture->missing), "%s\\missing", fixture->root);
+    SDL_snprintf(fixture->ambiguous_dir, sizeof(fixture->ambiguous_dir), "%s\\missing suffix", fixture->root);
+    SDL_snprintf(fixture->ambiguous_child, sizeof(fixture->ambiguous_child), "%s\\probe.exe", fixture->ambiguous_dir);
+
+    /* Exclusive creation: never reuse or remove somebody else's directory. */
+    fixture->created = CreateDirectoryA(directory, NULL) != 0;
+    SDLTest_AssertCheck(fixture->created, "Exclusively create fixture directory");
+    if (!fixture->created) {
+        return false;
+    }
+    result = SDL_CreateDirectory(fixture->ambiguous_dir) &&
+             SDL_CopyFile(data->childprocess_path, fixture->child) &&
+             SDL_CopyFile(data->childprocess_path, fixture->spaced_child) &&
+             SDL_CopyFile(data->childprocess_path, fixture->ambiguous_child);
+    SDLTest_AssertCheck(result, "Create benign executable fixtures: %s", SDL_GetError());
+    if (!result) {
+        return false;
+    }
+    for (i = 0; i < SDL_arraysize(fixture->batch); i++) {
+        SDL_IOStream *file = SDL_IOFromFile(fixture->batch[i], "wb");
+        SDLTest_AssertCheck(file != NULL, "Create batch fixture %d", i);
+        if (!file) {
+            return false;
+        }
+        if (i == 3) {
+            result = SDL_IOprintf(file, "@echo off\r\n\"%s\" %%*\r\n", fixture->batch[0]) > 0;
+        } else {
+            result = SDL_IOprintf(file, "@echo off\r\n> \"%s\" echo started\r\n\"%s\" --print-arguments -- %%*\r\n",
+                                  fixture->marker, fixture->child) > 0;
+        }
+        result = SDL_CloseIO(file) && result;
+        SDLTest_AssertCheck(result, "Write and close batch fixture %d", i);
+        if (!result) {
+            return false;
+        }
+    }
+    system_length = GetSystemDirectoryW(system_directory, SDL_arraysize(system_directory));
+    SDLTest_AssertCheck(system_length > 0 && system_length < SDL_arraysize(system_directory), "Get system directory");
+    if (!system_length || system_length >= SDL_arraysize(system_directory)) {
+        return false;
+    }
+    system_utf8 = SDL_iconv_string("UTF-8", "UTF-16LE", (const char *)system_directory,
+                                  (system_length + 1) * sizeof(WCHAR));
+    SDLTest_AssertCheck(system_utf8 != NULL, "Convert system directory to UTF-8");
+    if (!system_utf8) {
+        return false;
+    }
+    SDL_snprintf(fixture->cmd, sizeof(fixture->cmd), "%s\\cmd.exe", system_utf8);
+    SDL_free(system_utf8);
+    return true;
+}
+
+static SDL_Process *CreateProcessWindowsTest(const char *const *args, SDL_Environment *env, const char *cmdline)
+{
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_Process *process;
+    if (!props ||
+        !SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, (void *)args) ||
+        !SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_APP) ||
+        (env && !SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ENVIRONMENT_POINTER, env)) ||
+        (cmdline && !SDL_SetStringProperty(props, SDL_PROP_PROCESS_CREATE_CMDLINE_STRING, cmdline))) {
+        SDLTest_AssertCheck(false, "Set up process properties: %s", SDL_GetError());
+        SDL_DestroyProperties(props);
+        return NULL;
+    }
+    /* Default stdin is NULL: malformed shell commands cannot wait for input. */
+    process = SDL_CreateProcessWithProperties(props);
+    SDL_DestroyProperties(props);
+    return process;
+}
+
+static void CheckProcessWindowsOutput(const char *const *args, const char *expected, const char *cmdline)
+{
+    SDL_Process *process = CreateProcessWindowsTest(args, NULL, cmdline);
+    char *output;
+    size_t size = 0;
+    size_t expected_size = SDL_strlen(expected);
+    int exit_code = -1;
+
+    SDLTest_AssertCheck(process != NULL, "Create process: %s", SDL_GetError());
+    if (!process) {
+        return;
+    }
+    output = SDL_ReadProcess(process, &size, &exit_code);
+    SDLTest_AssertCheck(output != NULL, "Read process output: %s", SDL_GetError());
+    SDLTest_AssertCheck(exit_code == 0, "Child exits successfully, got %d", exit_code);
+    if (output) {
+        SDLTest_LogEscapedString("Expected: ", expected, expected_size);
+        SDLTest_LogEscapedString("Actual: ", output, size);
+        SDLTest_AssertCheck(size == expected_size && SDL_memcmp(output, expected, expected_size) == 0,
+                            "Preserve exact argument contents and boundaries");
+    }
+    SDL_free(output);
+    SDL_DestroyProcess(process);
+}
+
+static void CheckProcessWindowsRejected(ProcessWindowsFixture *fixture, const char *const *args, SDL_Environment *env)
+{
+    SDL_Process *process;
+    SDLTest_AssertCheck(SDL_RemovePath(fixture->marker), "Clear marker before rejected launch");
+    SDL_ClearError();
+    process = CreateProcessWindowsTest(args, env, NULL);
+    SDLTest_AssertCheck(process == NULL, "Reject before launching a child");
+    SDLTest_AssertCheck(SDL_strncmp(SDL_GetError(), "Windows process arguments:", 26) == 0,
+                        "Report explicit argument validation error, got: %s", SDL_GetError());
+    if (process) {
+        char *output = SDL_ReadProcess(process, NULL, NULL);
+        SDL_free(output);
+        SDL_DestroyProcess(process);
+    }
+    SDLTest_AssertCheck(!SDL_GetPathInfo(fixture->marker, NULL), "Rejected input did not execute batch fixture");
+}
+#endif
+
+static int SDLCALL process_testWindowsBatchArguments(void *arg)
+{
+#ifndef SDL_PLATFORM_WINDOWS
+    return TEST_SKIPPED;
+#else
+    ProcessWindowsFixture fixture;
+    static const char *const values[] = {
+        "", "plain", "foo bar", "foo\tbar", "\"a b\" c",
+        "foo" "\\\\" "\"" "bar", "foo bar\\\\", "^", "a&echo GRAPHIX_UNEXPECTED",
+        "<>&|()[]{}^=;'+,~", "a\"&echo GRAPHIX_UNEXPECTED", "a^\"&echo GRAPHIX_UNEXPECTED"
+    };
+    const char *args[] = { NULL, NULL, "baz", NULL };
+    char expected[256];
+    int file, value;
+
+    if (!CreateProcessWindowsFixture((TestProcessData *)arg, &fixture)) {
+        DestroyProcessWindowsFixture(&fixture);
+        return TEST_ABORTED;
+    }
+    for (file = 0; file < SDL_arraysize(fixture.batch); file++) {
+        args[0] = fixture.batch[file];
+        for (value = 0; value < SDL_arraysize(values); value++) {
+            SDLTest_Log("Batch filename case %d, argument case %d", file, value);
+            args[1] = values[value];
+            /* Maintainer-approved strict shell policy: quotes are rejected,
+             * not encoded for a guessed number of batch expansion passes. */
+            if (SDL_strchr(values[value], '"')) {
+                CheckProcessWindowsRejected(&fixture, args, NULL);
+                continue;
+            }
+            SDL_snprintf(expected, sizeof(expected), "|0=%s|\r\n|1=baz|\r\n", values[value]);
+            CheckProcessWindowsOutput(args, expected, NULL);
+        }
+    }
+    DestroyProcessWindowsFixture(&fixture);
+    return TEST_COMPLETED;
+#endif
+}
+
+static int SDLCALL process_testWindowsExecutableBoundary(void *arg)
+{
+#ifndef SDL_PLATFORM_WINDOWS
+    return TEST_SKIPPED;
+#else
+    ProcessWindowsFixture fixture;
+    const char *args[] = { NULL, "--print-arguments", "--", "control", NULL };
+    const char *ambiguous_args[] = { NULL, "suffix\\probe.exe", "--print-arguments", "--", "UNEXPECTED", NULL };
+    const char *invalid_args[] = { NULL, "control", NULL };
+    static const char *const suffixes[] = { ".", " ", ". ", " .", "..  ", "\t", "\r", "\n" };
+    char invalid_path[1100];
+    int file, suffix;
+
+    if (!CreateProcessWindowsFixture((TestProcessData *)arg, &fixture)) {
+        DestroyProcessWindowsFixture(&fixture);
+        return TEST_ABORTED;
+    }
+    args[0] = fixture.spaced_child;
+    CheckProcessWindowsOutput(args, "|0=control|\r\n", NULL);
+    args[0] = fixture.ambiguous_child;
+    CheckProcessWindowsOutput(args, "|0=control|\r\n", NULL);
+    ambiguous_args[0] = fixture.missing;
+    {
+        SDL_Process *process = CreateProcessWindowsTest(ambiguous_args, NULL, NULL);
+        SDLTest_AssertCheck(process == NULL, "Never combine missing argv[0] with argv[1] to select another executable");
+        if (process) {
+            char *output = SDL_ReadProcess(process, NULL, NULL);
+            SDLTest_Log("Unexpected executable launched");
+            SDL_free(output);
+            SDL_DestroyProcess(process);
+        }
+    }
+    for (file = 0; file < SDL_arraysize(fixture.batch) + 1; file++) {
+        const char *path = file < SDL_arraysize(fixture.batch) ? fixture.batch[file] : fixture.child;
+        for (suffix = 0; suffix < SDL_arraysize(suffixes); suffix++) {
+            SDLTest_Log("Reject filename case %d, suffix case %d", file, suffix);
+            SDL_snprintf(invalid_path, sizeof(invalid_path), "%s%s", path, suffixes[suffix]);
+            invalid_args[0] = invalid_path;
+            CheckProcessWindowsRejected(&fixture, invalid_args, NULL);
+        }
+    }
+    DestroyProcessWindowsFixture(&fixture);
+    return TEST_COMPLETED;
+#endif
+}
+
+static int SDLCALL process_testWindowsShellRejections(void *arg)
+{
+#ifndef SDL_PLATFORM_WINDOWS
+    return TEST_SKIPPED;
+#else
+    ProcessWindowsFixture fixture;
+    static const char *const values[] = {
+        "%GRAPHIX_EXPAND%", "^%GRAPHIX_EXPAND^%",
+        "%CMDCMDLINE:~-1%&echo GRAPHIX_UNEXPECTED", "!GRAPHIX_EXPAND!",
+        "foo\rbar", "foo\nbar", "\r", "\n", "\"", "a\"&echo GRAPHIX_UNEXPECTED"
+    };
+    const char *batch_args[] = { NULL, NULL, "baz", NULL };
+    const char *cmd_args[] = { NULL, "/d", "/s", "/c", NULL, NULL, "baz", NULL };
+    const char *shells[3];
+    SDL_Environment *env;
+    int shell, value;
+
+    if (!CreateProcessWindowsFixture((TestProcessData *)arg, &fixture)) {
+        DestroyProcessWindowsFixture(&fixture);
+        return TEST_ABORTED;
+    }
+    env = SDL_CreateEnvironment(true);
+    if (!env ||
+        !SDL_SetEnvironmentVariable(env, "GRAPHIX_EXPAND", "\"&echo GRAPHIX_UNEXPECTED", true) ||
+        !SDL_SetEnvironmentVariable(env, "GRAPHIX_EXPAND^", "\"&echo GRAPHIX_UNEXPECTED", true)) {
+        SDLTest_AssertCheck(false, "Create isolated expansion environment");
+        SDL_DestroyEnvironment(env);
+        DestroyProcessWindowsFixture(&fixture);
+        return TEST_ABORTED;
+    }
+    batch_args[0] = fixture.batch[0];
+    for (value = 0; value < SDL_arraysize(values); value++) {
+        SDLTest_Log("Reject batch argument case %d", value);
+        batch_args[1] = values[value];
+        CheckProcessWindowsRejected(&fixture, batch_args, env);
+    }
+    shells[0] = "cmd";
+    shells[1] = "CMD.EXE";
+    shells[2] = fixture.cmd;
+    cmd_args[4] = fixture.batch[0];
+    for (shell = 0; shell < SDL_arraysize(shells); shell++) {
+        cmd_args[0] = shells[shell];
+        for (value = 0; value < SDL_arraysize(values); value++) {
+            SDLTest_Log("Reject cmd spelling %d, argument case %d", shell, value);
+            cmd_args[5] = values[value];
+            CheckProcessWindowsRejected(&fixture, cmd_args, env);
+        }
+    }
+    SDL_DestroyEnvironment(env);
+    DestroyProcessWindowsFixture(&fixture);
+    return TEST_COMPLETED;
+#endif
+}
+
+static int SDLCALL process_testWindowsCmdArguments(void *arg)
+{
+#ifndef SDL_PLATFORM_WINDOWS
+    return TEST_SKIPPED;
+#else
+    ProcessWindowsFixture fixture;
+    static const char *const values[] = {
+        "", "foo bar", "foo\tbar", "foo" "\\\\" "\"" "bar",
+        "a&echo GRAPHIX_UNEXPECTED", "a\"&echo GRAPHIX_UNEXPECTED", "foo bar\\\\", "^", "/c", "/k"
+    };
+    const char *args[] = { NULL, "/c", NULL, "--print-arguments", "--", NULL, "baz", NULL };
+    const char *shells[3];
+    char expected[256];
+    char raw_command[1400];
+    const char *invalid_args[] = { "cmd.exe", "/c", "%REJECTED%!", NULL };
+    static const char *const invalid_options[] = { "/c echo", "/d/c", "/unknown", "/t:GG" };
+    int shell, value;
+
+    if (!CreateProcessWindowsFixture((TestProcessData *)arg, &fixture)) {
+        DestroyProcessWindowsFixture(&fixture);
+        return TEST_ABORTED;
+    }
+    shells[0] = "cmd";
+    shells[1] = "CMD.EXE";
+    shells[2] = fixture.cmd;
+    args[2] = fixture.spaced_child;
+    for (shell = 0; shell < SDL_arraysize(shells); shell++) {
+        args[0] = shells[shell];
+        for (value = 0; value < SDL_arraysize(values); value++) {
+            SDLTest_Log("Literal cmd spelling %d, argument case %d", shell, value);
+            args[5] = values[value];
+            if (SDL_strchr(values[value], '"')) {
+                CheckProcessWindowsRejected(&fixture, args, NULL);
+                continue;
+            }
+            SDL_snprintf(expected, sizeof(expected), "|0=%s|\r\n|1=baz|\r\n", values[value]);
+            CheckProcessWindowsOutput(args, expected, NULL);
+        }
+        {
+            const char *option_args[] = {
+                shells[shell], "/D", "/S", "/Q", "/A", "/E:ON", "/F:OFF", "/V:ON", "/T:0A", "/C",
+                fixture.spaced_child, "--print-arguments", "--", "a&echo GRAPHIX_UNEXPECTED", NULL
+            };
+            const char *rejected_args[] = { shells[shell], NULL, fixture.batch[0], NULL };
+            const char *missing_command[] = { shells[shell], "/c", NULL };
+            const char *empty_command[] = { shells[shell], "/k", "", NULL };
+            int option;
+
+            CheckProcessWindowsOutput(option_args, "|0=a&echo GRAPHIX_UNEXPECTED|\r\n", NULL);
+            for (option = 0; option < SDL_arraysize(invalid_options); option++) {
+                rejected_args[1] = invalid_options[option];
+                CheckProcessWindowsRejected(&fixture, rejected_args, NULL);
+            }
+            CheckProcessWindowsRejected(&fixture, missing_command, NULL);
+            CheckProcessWindowsRejected(&fixture, empty_command, NULL);
+        }
+    }
+    /* The explicitly raw escape hatch still owns shell syntax and takes
+     * precedence over an argument list that the strict path would reject. */
+    SDL_snprintf(raw_command, sizeof(raw_command), "\"%s\" /d /v:off /s /c \"echo RAW_FIRST&echo RAW_SECOND\"", fixture.cmd);
+    CheckProcessWindowsOutput(invalid_args, "RAW_FIRST\r\nRAW_SECOND\r\n", raw_command);
+    DestroyProcessWindowsFixture(&fixture);
+    return TEST_COMPLETED;
+#endif
+}
+
 
 static int SDLCALL process_testexitCode(void *arg)
 {
@@ -820,55 +1267,34 @@ static int process_testNonExistingExecutable(void *arg)
 
 static int process_testBatBadButVulnerability(void *arg)
 {
-    TestProcessData *data = (TestProcessData *)arg;
-    char *inject_arg = NULL;
-    char **process_args = NULL;
-    char *text_out = NULL;
-    size_t len_text_out;
-    int exitcode;
-    SDL_Process *process = NULL;
-    SDL_IOStream *child_bat;
-    char buffer[256];
-
 #ifndef SDL_PLATFORM_WINDOWS
-    SDLTest_AssertPass("The BatBadBut vulnerability only applied to Windows");
     return TEST_SKIPPED;
-#endif
-    /* FIXME: remove child.bat at end of loop and/or create in temporary directory */
-    child_bat = SDL_IOFromFile("child_batbadbut.bat", "w");
-    SDL_IOprintf(child_bat, "@echo off\necho Hello from child_batbadbut.bat\necho \"|bat1=%%1|\"\n");
-    SDL_CloseIO(child_bat);
+#else
+    ProcessWindowsFixture fixture;
+    char *inject_arg = NULL;
+    const char *args[] = { NULL, NULL, NULL };
 
-    inject_arg = SDL_malloc(SDL_strlen(data->childprocess_path) + 100);
-    SDL_snprintf(inject_arg, SDL_strlen(data->childprocess_path) + 100, "\"&%s --version  --print-arguments --stdout OWNEDSTDOUT\"", data->childprocess_path);
-    process_args = CreateArguments(0, "child_batbadbut.bat", inject_arg, NULL);
-
-    SDLTest_AssertPass("About to call SDL_CreateProcess");
-    process = SDL_CreateProcess((const char * const*)process_args, true);
-    SDLTest_AssertCheck(process != NULL, "SDL_CreateProcess");
-    if (!process) {
-        goto cleanup;
+    if (!CreateProcessWindowsFixture((TestProcessData *)arg, &fixture)) {
+        DestroyProcessWindowsFixture(&fixture);
+        return TEST_ABORTED;
     }
-    text_out = SDL_ReadProcess(process, &len_text_out, &exitcode);
-    SDLTest_AssertCheck(exitcode == 0, "process exited with exitcode 0, was %d", exitcode);
-    SDLTest_AssertCheck(text_out != NULL, "SDL_ReadProcess returned data");
-    SDLTest_LogEscapedString("Output: ", text_out, len_text_out);
-    if (!text_out) {
-        goto cleanup;
+    /* The original payload is now rejected synchronously under Graphix's
+     * approved quote policy, rather than testing a particular quoted spelling
+     * of %1 after executing a batch file. The marker proves no batch ran. */
+    if (SDL_asprintf(&inject_arg, "\"&%s --version --print-arguments --stdout OWNEDSTDOUT\"", fixture.child) < 0) {
+        SDLTest_AssertCheck(false, "Allocate original BatBadBut payload");
+        DestroyProcessWindowsFixture(&fixture);
+        return TEST_ABORTED;
     }
-
-    SDLTest_AssertCheck(SDL_strstr(text_out, "Hello from child_batbadbut") != NULL, "stdout contains 'Hello from child'");
-    SDLTest_AssertCheck(SDL_strstr(text_out, "SDL version") == NULL, "stdout should not contain SDL version");
-    SDL_snprintf(buffer, sizeof(buffer), "|bat1=\"\"\"&%s\"\"|", process_args[1] + 2);
-    SDLTest_LogEscapedString("stdout should contain: ", buffer, SDL_strlen(buffer));
-    SDLTest_AssertCheck(SDL_strstr(text_out, buffer) != NULL, "Verify first argument");
-
-cleanup:
-    SDL_free(text_out);
-    SDL_DestroyProcess(process);
+    args[0] = fixture.batch[0];
+    args[1] = "control";
+    CheckProcessWindowsOutput(args, "|0=control|\r\n", NULL);
+    args[1] = inject_arg;
+    CheckProcessWindowsRejected(&fixture, args, NULL);
     SDL_free(inject_arg);
-    DestroyStringArray(process_args);
+    DestroyProcessWindowsFixture(&fixture);
     return TEST_COMPLETED;
+#endif
 }
 
 static int process_testFileRedirection(void *arg)
@@ -1142,6 +1568,26 @@ static const SDLTest_TestCaseReference processTestArguments = {
     process_testArguments, "process_testArguments", "Test passing arguments to child process", TEST_ENABLED
 };
 
+static const SDLTest_TestCaseReference processTestArgumentsBackslashQuote = {
+    process_testArgumentsBackslashQuote, "process_testArgumentsBackslashQuote", "Test backslashes before a quote and preservation of the following argument", TEST_ENABLED
+};
+
+static const SDLTest_TestCaseReference processTestWindowsBatchArguments = {
+    process_testWindowsBatchArguments, "process_testWindowsBatchArguments", "Test literal batch arguments and spaced batch filenames", TEST_ENABLED
+};
+
+static const SDLTest_TestCaseReference processTestWindowsExecutableBoundary = {
+    process_testWindowsExecutableBoundary, "process_testWindowsExecutableBoundary", "Test executable boundaries and rejected trailing path characters", TEST_ENABLED
+};
+
+static const SDLTest_TestCaseReference processTestWindowsShellRejections = {
+    process_testWindowsShellRejections, "process_testWindowsShellRejections", "Test synchronous rejection of unsafe shell arguments", TEST_ENABLED
+};
+
+static const SDLTest_TestCaseReference processTestWindowsCmdArguments = {
+    process_testWindowsCmdArguments, "process_testWindowsCmdArguments", "Test literal cmd arguments and explicit raw command-line precedence", TEST_ENABLED
+};
+
 static const SDLTest_TestCaseReference processTestExitCode = {
     process_testexitCode, "process_testExitCode", "Test exit codes", TEST_ENABLED
 };
@@ -1200,6 +1646,11 @@ static const SDLTest_TestCaseReference processTestWindowsCmdlinePrecedence = {
 
 static const SDLTest_TestCaseReference *processTests[] = {
     &processTestArguments,
+    &processTestArgumentsBackslashQuote,
+    &processTestWindowsBatchArguments,
+    &processTestWindowsExecutableBoundary,
+    &processTestWindowsShellRejections,
+    &processTestWindowsCmdArguments,
     &processTestExitCode,
     &processTestInheritedEnv,
     &processTestNewEnv,
