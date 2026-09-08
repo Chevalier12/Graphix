@@ -543,3 +543,13 @@ Windows maximum-size runs, package provenance/hash verification and downstream
 Cerneala verification remain pending. Publication is authorized but has not
 occurred. No NVIDIA alpha-occlusion fix or human validation is claimed.
 These release changes were prepared with AI assistance.
+
+### Cross-platform build gate
+
+The first graphix.4 workflow, run `34256521647` at release-preparation commit
+`b1f7d18673f60cd4bb32c8def9ef9de164cfe908`, exposed a missing standard-library
+include in `testgpurender_texture_contracts.c`. Linux GCC and macOS Clang reject
+its `exit(2)` call as undeclared under the unchanged C99/warnings-as-errors
+build. Added the owning `<stdlib.h>` declaration; no assertion, CTest entry,
+compiler diagnostic policy or production implementation was changed.
+The complete six-RID matrix must pass again before package publication.

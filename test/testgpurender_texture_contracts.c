@@ -17,6 +17,8 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_test.h>
 
+#include <stdlib.h>
+
 typedef struct Allocation
 {
     void *ptr;
