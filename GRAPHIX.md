@@ -521,3 +521,25 @@ wiki. All 1,270 exported SDL names and ordinals remain unchanged.
 No unrelated documentation infrastructure is required. These verification results
 were recorded before publication; commit and issue-closure references belong to
 the Graphix issue history. No package release was performed.
+
+## 2026-09-08: graphix.4 release preparation
+
+Prepared `Graphix.Native 3.4.16-graphix.4` from the native implementation at
+`f3c691b233bb0d5fc56e1646d8e0d64dc0a1fc07`. Compared with the published
+graphix.3 source, this includes the D3D12 descriptor heap and GPU renderer
+texture corrections, plus the approved Windows process argument and shell
+validation changes documented above. The stricter Windows shell argument
+policy is an intentional behavioral compatibility change; the raw command-line
+path remains caller-owned. The separate `Graphix-CS 3.4.16.1` binding is unchanged.
+
+Updated the entry-point installation/build commands and the workflow's default
+package version. Native sources, headers, tests and package contents are not
+changed by this release-preparation step. Existing package versions will not
+be overwritten. Runtime provenance will identify the committed release source.
+
+The release documentation gate was confirmed RED against the previous READMEs
+for the new version. Six matching-RID builds, their CTest suites, both native
+Windows maximum-size runs, package provenance/hash verification and downstream
+Cerneala verification remain pending. Publication is authorized but has not
+occurred. No NVIDIA alpha-occlusion fix or human validation is claimed.
+These release changes were prepared with AI assistance.

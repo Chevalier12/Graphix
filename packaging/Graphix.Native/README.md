@@ -14,10 +14,10 @@ SDL_shadercross or other SDL companion libraries.
 
 ## Installation
 
-Install [Graphix.Native 3.4.16-graphix.3 from NuGet.org](https://www.nuget.org/packages/Graphix.Native/3.4.16-graphix.3):
+Install [Graphix.Native 3.4.16-graphix.4 from NuGet.org](https://www.nuget.org/packages/Graphix.Native/3.4.16-graphix.4):
 
 ```powershell
-dotnet add package Graphix.Native --version 3.4.16-graphix.3
+dotnet add package Graphix.Native --version 3.4.16-graphix.4
 ```
 
 This is a prerelease package. Its exact version can be restored directly;
@@ -32,11 +32,11 @@ temporary CI artifacts or a local package feed.
 From the Graphix repository, build each RID on its matching operating system:
 
 ```powershell
-./build-scripts/Build-GraphixNative.ps1 -RuntimeIdentifier win-x64 -PackageVersion 3.4.16-graphix.3
+./build-scripts/Build-GraphixNative.ps1 -RuntimeIdentifier win-x64 -PackageVersion 3.4.16-graphix.4
 ```
 
 Repeat for `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64` and `osx-arm64`,
-collecting the outputs under `out/graphix/3.4.16-graphix.3/<rid>/`.
+collecting the outputs under `out/graphix/3.4.16-graphix.4/<rid>/`.
 Linux builds require a matching-architecture runner. Windows ARM64 builds
 require the ARM64 MSVC tools. CMake and platform development dependencies are
 required; building alone does not run or certify the native tests.
@@ -63,7 +63,7 @@ These are build settings, not proof of runtime support on every older OS.
 After collecting all six builds of the same commit:
 
 ```powershell
-./build-scripts/Pack-GraphixNative.ps1 -PackageVersion 3.4.16-graphix.3
+./build-scripts/Pack-GraphixNative.ps1 -PackageVersion 3.4.16-graphix.4
 ```
 
 The pack script checks the public installation documentation, complete RID
