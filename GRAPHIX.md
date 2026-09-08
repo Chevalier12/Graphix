@@ -553,3 +553,38 @@ its `exit(2)` call as undeclared under the unchanged C99/warnings-as-errors
 build. Added the owning `<stdlib.h>` declaration; no assertion, CTest entry,
 compiler diagnostic policy or production implementation was changed.
 The complete six-RID matrix must pass again before package publication.
+
+### Verified graphix.4 package awaiting maintainer upload
+
+The replacement workflow [34256929848](https://github.com/Chevalier12/Graphix/actions/runs/34256929848)
+passed at source commit `7dcfac5a73007e72bd8fb060861e46fe07f55c46`:
+
+- All six matching-platform native builds and CTest suites passed: 25/25 per
+  RID, 150 total, zero failures or skipped CTest entries. These are the normal
+  headless suites, not six-platform GPU certification.
+- The separate real Windows maximum-size regression passed 400/400 assertions
+  on x64 and 400/400 on ARM64.
+- The package job verified all six RID payloads and assembled the native-only
+  NuGet archive. Local verification checked each packaged native hash, source
+  commit, NuGet metadata and the license/README bytes against committed LF
+  source, rather than this Windows checkout's CRLF conversions.
+- The downloaded Actions artifact ZIP matches its published SHA-256 digest;
+  its contained `.nupkg` matches the local upload candidate byte for byte.
+- The exact packaged Windows x64 DLL passed the local D3D12 descriptor matrix
+  (21/21 assertions) and GPU texture matrix on both D3D12 and Vulkan (162/162
+  each). Runtime revision output identifies graphix.4 and the source commit
+  above. Its 1,271 exported names and ordinals match the published graphix.3 DLL.
+
+Upload candidate: `out/packages/Graphix.Native.3.4.16-graphix.4.nupkg`,
+18,058,270 bytes. SHA-256:
+`50EDD1A4A789C03FEB471E1A1FC2AEB2D67359C2C4482C6EA4CCB55F7BF81262`.
+Actions artifact ID: `10068404959`; artifact ZIP SHA-256:
+`D9F09B22FF19E1BD60BC3055B6ECA6B3B84BB223618CE417F69E10391FE32DA4`.
+Local logs, JUnit summaries and package checks are retained under
+`out/evidence/release-graphix.4/`.
+
+The maintainer elected to upload the verified archive to NuGet personally.
+Publication and Cerneala's dependency update/consumer verification are still
+pending; the existing package has not been overwritten. This release does not
+claim to fix the independent NVIDIA alpha-occlusion failure. GPU execution on
+other RIDs and human runtime validation were not performed.
