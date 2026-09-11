@@ -14,13 +14,13 @@ SDL_shadercross or other SDL companion libraries.
 
 ## Installation
 
-The graphix.5 candidate awaits maintainer upload. These installation commands
+The graphix.6 candidate awaits maintainer upload. These installation commands
 apply after that upload; the build/package workflow does not publish it.
 
-Install [Graphix.Native 3.4.16-graphix.5 from NuGet.org](https://www.nuget.org/packages/Graphix.Native/3.4.16-graphix.5):
+Install [Graphix.Native 3.4.16-graphix.6 from NuGet.org](https://www.nuget.org/packages/Graphix.Native/3.4.16-graphix.6):
 
 ```powershell
-dotnet add package Graphix.Native --version 3.4.16-graphix.5
+dotnet add package Graphix.Native --version 3.4.16-graphix.6
 ```
 
 This is a prerelease package. Its exact version can be restored directly;
@@ -35,11 +35,11 @@ temporary CI artifacts or a local package feed.
 From the Graphix repository, build each RID on its matching operating system:
 
 ```powershell
-./build-scripts/Build-GraphixNative.ps1 -RuntimeIdentifier win-x64 -PackageVersion 3.4.16-graphix.5
+./build-scripts/Build-GraphixNative.ps1 -RuntimeIdentifier win-x64 -PackageVersion 3.4.16-graphix.6
 ```
 
 Repeat for `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64` and `osx-arm64`,
-collecting the outputs under `out/graphix/3.4.16-graphix.5/<rid>/`.
+collecting the outputs under `out/graphix/3.4.16-graphix.6/<rid>/`.
 Linux builds require a matching-architecture runner. Windows ARM64 builds
 require the ARM64 MSVC tools. CMake and platform development dependencies are
 required; building alone does not run or certify the native tests.
@@ -69,7 +69,7 @@ These are build settings, not proof of runtime support on every older OS.
 After collecting all six builds of the same commit:
 
 ```powershell
-./build-scripts/Pack-GraphixNative.ps1 -PackageVersion 3.4.16-graphix.5
+./build-scripts/Pack-GraphixNative.ps1 -PackageVersion 3.4.16-graphix.6
 ```
 
 The pack script checks the public installation documentation, complete RID
@@ -82,7 +82,7 @@ download its six native payload artifacts to the same layout and check out
 their source commit, then run:
 
 ```powershell
-./build-scripts/Pack-GraphixNative.ps1 -PackageVersion 3.4.16-graphix.5 -VerifyPackagePath ./out/packages/Graphix.Native.3.4.16-graphix.5.nupkg
+./build-scripts/Pack-GraphixNative.ps1 -PackageVersion 3.4.16-graphix.6 -VerifyPackagePath ./out/packages/Graphix.Native.3.4.16-graphix.6.nupkg
 ```
 
 This mode is read-only for the archive. It checks the NuGet repository commit,

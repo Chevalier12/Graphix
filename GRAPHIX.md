@@ -662,3 +662,65 @@ must complete before handing off an upload candidate. Local evidence is under
 NuGet upload, downstream consumer certification, GameInput runtime validation,
 other-platform GPU execution or human manual validation is claimed. These
 Graphix changes were prepared with AI assistance.
+
+## 2026-09-11: retain compatible D3D12 graphics root bindings (unreleased)
+
+`D3D12_BindGraphicsPipeline` now invalidates graphics root bindings only when
+the native root-signature handle changes, including the first pipeline in a
+render pass. Pipeline state and topology are still set on every bind. Resource
+changes and descriptor-heap rotation retain their existing invalidation rules.
+No layout-equivalence heuristic, additional cache, API or ABI change was added.
+This follows the D3D12 contract: setting the same root signature does not stale
+existing bindings; changing it does. See
+https://learn.microsoft.com/en-us/windows/win32/direct3d12/using-a-root-signature.
+
+The permanent `graphics-pipeline-retained` descriptor test alternates two actual
+PSOs sharing a root signature with unchanged sampled resources. After 128
+warmup draws, 8,193 measured draws caused 24 SDL allocation requests before the
+fix and zero afterward, in each of three iterations. The counting callbacks
+forward to the original allocator and measure only the test thread; this is
+not a claim about driver allocations. GPU readback and D3D12 validation passed.
+`graphics-pipeline-changing` also covers changing fragment resources and heap
+rollover while retaining compatible vertex bindings.
+
+Local Windows x64 verification on NVIDIA RTX 2060, driver 32.0.15.9159:
+
+- Clean Release ALL_BUILD passed after all temporary native probes were removed.
+- CTest passed 33/33 in 67.55 seconds, with both opt-in GPU corpora enabled and
+  `SDL_TESTS_QUICK=1`. The descriptor matrix has nine cases, three iterations each.
+- All 1,271 exported names and ordinals match public graphix.5; public headers
+  and the dynamic API have no changes.
+- A Cerneala solution run passed 5,123 tests with four existing NVIDIA skips.
+  Only the Core and SDL_GPU test outputs temporarily used the explicitly
+  unreleased local DLL, including the historical pixel corpus. Other projects
+  retained public graphix.5. Two OS-input tests remained excluded at the user's
+  request, and the public-package loaded-revision assertion was explicitly
+  excluded for this local build rather than falsifying its identity. Both
+  overridden DLLs were restored to their verified public hashes afterward.
+- Separate temporary native instrumentation measured 10,210 fewer descriptor
+  table writes and copies for the same 7,656 graphics draws. Inclusive native
+  resource-binding time changed from 8.3145 ms to 0.6884 ms in those diagnostic
+  runs. These are not end-to-end performance acceptance results.
+
+The local DLL SHA-256 is
+`538afd3c11ae40cf55dbb8bae9f8f87975a99cf850508d631254dcd05ba5545d`.
+The Cerneala performance thresholds remain unmet. No cross-platform build,
+package publication, permanent downstream dependency change, PIX capture or
+human manual validation is claimed. These changes were prepared with AI
+assistance.
+
+### graphix.6 release preparation
+
+Prepared the next unused package version, `Graphix.Native 3.4.16-graphix.6`,
+for the compatible D3D12 graphics-root binding change above. Public NuGet
+currently contains graphix.3, graphix.4 and graphix.5; none is overwritten.
+Both installation READMEs and the package workflow default now identify
+graphix.6. The release-documentation gate rejected the previous README
+versions and passed after synchronization.
+
+The unchanged six-RID build/test/package workflow must pass for the committed
+source. The exact downloaded package will then be checked against its native
+payloads, provenance and committed documentation, and its Windows x64 DLL
+will be exercised with the local GPU regression matrices before handoff.
+The maintainer will upload the verified archive personally. NuGet publication
+and Cerneala's dependency update remain separate, pending steps.

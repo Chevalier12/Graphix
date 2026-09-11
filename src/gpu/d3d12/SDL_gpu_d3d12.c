@@ -4746,25 +4746,32 @@ static void D3D12_BindGraphicsPipeline(
     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
     D3D12GraphicsPipeline *pipeline = (D3D12GraphicsPipeline *)graphicsPipeline;
     Uint32 i;
+    bool rootSignatureChanged = d3d12CommandBuffer->currentGraphicsPipeline == NULL ||
+        d3d12CommandBuffer->currentGraphicsPipeline->rootSignature->handle != pipeline->rootSignature->handle;
 
     d3d12CommandBuffer->currentGraphicsPipeline = pipeline;
 
     // Set the pipeline state
     ID3D12GraphicsCommandList_SetPipelineState(d3d12CommandBuffer->graphicsCommandList, pipeline->pipelineState);
-    ID3D12GraphicsCommandList_SetGraphicsRootSignature(d3d12CommandBuffer->graphicsCommandList, pipeline->rootSignature->handle);
     ID3D12GraphicsCommandList_IASetPrimitiveTopology(d3d12CommandBuffer->graphicsCommandList, SDLToD3D12_PrimitiveType[pipeline->primitiveType]);
 
-    // Mark that bindings are needed
-    d3d12CommandBuffer->needVertexSamplerBind = true;
-    d3d12CommandBuffer->needVertexStorageTextureBind = true;
-    d3d12CommandBuffer->needVertexStorageBufferBind = true;
-    d3d12CommandBuffer->needFragmentSamplerBind = true;
-    d3d12CommandBuffer->needFragmentStorageTextureBind = true;
-    d3d12CommandBuffer->needFragmentStorageBufferBind = true;
+    /* Graphix: a PSO change does not invalidate bindings when the native root
+     * signature is unchanged. Resource changes and heap rotation still mark
+     * their own bindings dirty. The first pipeline of a pass always binds. */
+    if (rootSignatureChanged) {
+        ID3D12GraphicsCommandList_SetGraphicsRootSignature(d3d12CommandBuffer->graphicsCommandList, pipeline->rootSignature->handle);
 
-    for (i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
-        d3d12CommandBuffer->needVertexUniformBufferBind[i] = true;
-        d3d12CommandBuffer->needFragmentUniformBufferBind[i] = true;
+        d3d12CommandBuffer->needVertexSamplerBind = true;
+        d3d12CommandBuffer->needVertexStorageTextureBind = true;
+        d3d12CommandBuffer->needVertexStorageBufferBind = true;
+        d3d12CommandBuffer->needFragmentSamplerBind = true;
+        d3d12CommandBuffer->needFragmentStorageTextureBind = true;
+        d3d12CommandBuffer->needFragmentStorageBufferBind = true;
+
+        for (i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
+            d3d12CommandBuffer->needVertexUniformBufferBind[i] = true;
+            d3d12CommandBuffer->needFragmentUniformBufferBind[i] = true;
+        }
     }
 
     for (i = 0; i < pipeline->header.num_vertex_uniform_buffers; i += 1) {

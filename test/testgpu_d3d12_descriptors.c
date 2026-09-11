@@ -96,17 +96,62 @@ typedef struct TestCase
     bool vertex_sampler;
     Uint32 draws;
     bool output_texture;
+    bool pipeline_rebind;
+    bool fixed_resources;
 } TestCase;
 
 static const TestCase cases[] = {
-    {"graphics-samplers", false, 3, false, 1367, false},
-    {"graphics-retained", false, 1, true, 4097, false},
-    {"graphics-views", false, 0, false, 21846, false},
-    {"compute-samplers", true, 3, false, 1367, false},
-    {"compute-retained", true, 1, false, 4097, false},
-    {"compute-views", true, 0, false, 21846, false},
-    {"compute-write-texture", true, 1, false, 4097, true}
+    {"graphics-samplers", false, 3, false, 1367, false, false, false},
+    {"graphics-retained", false, 1, true, 4097, false, false, false},
+    {"graphics-views", false, 0, false, 21846, false, false, false},
+    {"compute-samplers", true, 3, false, 1367, false, false, false},
+    {"compute-retained", true, 1, false, 4097, false, false, false},
+    {"compute-views", true, 0, false, 21846, false, false, false},
+    {"compute-write-texture", true, 1, false, 4097, true, false, false},
+    {"graphics-pipeline-retained", false, 1, true, 8321, false, true, true},
+    {"graphics-pipeline-changing", false, 1, true, 8321, false, true, false}
 };
+
+/* Observe only SDL allocation requests on the test thread, forwarding to the
+   original allocator unchanged. Native driver allocations are not counted.
+   Other threads never read the thread-owned measurement state. */
+static SDL_malloc_func original_malloc;
+static SDL_calloc_func original_calloc;
+static SDL_realloc_func original_realloc;
+static SDL_free_func original_free;
+static DWORD allocation_thread;
+static bool measure_allocations;
+static Uint64 allocation_requests;
+
+static void CountAllocation(void)
+{
+    if (GetCurrentThreadId() == allocation_thread && measure_allocations) {
+        ++allocation_requests;
+    }
+}
+
+static void *SDLCALL CountedMalloc(size_t size)
+{
+    CountAllocation();
+    return original_malloc(size);
+}
+
+static void *SDLCALL CountedCalloc(size_t count, size_t size)
+{
+    CountAllocation();
+    return original_calloc(count, size);
+}
+
+static void *SDLCALL CountedRealloc(void *memory, size_t size)
+{
+    CountAllocation();
+    return original_realloc(memory, size);
+}
+
+static void SDLCALL CountedFree(void *memory)
+{
+    original_free(memory);
+}
 
 typedef struct TestContext
 {
@@ -124,6 +169,7 @@ typedef struct TestContext
     SDL_GPUTexture *target;
     SDL_GPUSampler *sampler;
     SDL_GPUGraphicsPipeline *pipeline;
+    SDL_GPUGraphicsPipeline *alternate_pipeline;
     SDL_GPUComputePipeline *compute_pipeline;
     SDL_GPUTransferBuffer *download;
     const TestCase *test;
@@ -349,9 +395,14 @@ static bool CreateResources(TestContext *ctx)
         pipeline_info.target_info.num_color_targets = 1;
         pipeline_info.target_info.color_target_descriptions = &target_description;
         ctx->pipeline = SDL_CreateGPUGraphicsPipeline(ctx->gpu, &pipeline_info);
+        if (ctx->test->pipeline_rebind) {
+            target_description.blend_state.enable_color_write_mask = true;
+            target_description.blend_state.color_write_mask = SDL_GPU_COLORCOMPONENT_R;
+            ctx->alternate_pipeline = SDL_CreateGPUGraphicsPipeline(ctx->gpu, &pipeline_info);
+        }
         SDL_ReleaseGPUShader(ctx->gpu, vertex);
         SDL_ReleaseGPUShader(ctx->gpu, fragment);
-        if (!ctx->pipeline) {
+        if (!ctx->pipeline || (ctx->test->pipeline_rebind && !ctx->alternate_pipeline)) {
             return false;
         }
     }
@@ -436,7 +487,7 @@ static SDL_FColor ExpectedColor(const TestCase *test, Uint32 index)
 {
     SDL_FColor color;
     float component = test->samplers == 1 ? 1.0f : 1.0f / 3.0f;
-    color.r = (index & 1) ? 0.0f : component;
+    color.r = !test->fixed_resources && (index & 1) ? 0.0f : component;
     color.g = color.b = test->samplers == 1 ? 0.0f : component;
     color.a = 1.0f;
     return color;
@@ -501,12 +552,17 @@ static bool RunDraws(TestContext *ctx, Uint32 draws)
         buffers[i] = ctx->buffers[i];
     }
     start = SDL_GetTicksNS();
+    allocation_requests = 0;
     for (i = 0; i < draws; ++i) {
         /* Change an actual resource, not a private heap index. In the three-
            sampler case the original 683rd draw needs entries 2046..2048. */
-        bindings[0].texture = ctx->textures[(i & 1) ? 3 : 0];
+        bindings[0].texture = ctx->textures[!ctx->test->fixed_resources && (i & 1) ? 3 : 0];
         buffers[0] = ctx->buffers[(i & 1) ? 3 : 0];
         SDL_SetAtomicInt(&ctx->current_draw, (int)i + 1);
+        /* Warm both pipelines, retained bindings and command-buffer tracking
+           before measuring. Rebinding unchanged resources must not consume
+           descriptor heaps merely because the color-write pipeline changes. */
+        measure_allocations = ctx->test->fixed_resources && i >= 128;
         if (compute_pass) {
             Uint32 params[4] = {i, 0, 0, 0};
             if (ctx->test->samplers) {
@@ -519,6 +575,9 @@ static bool RunDraws(TestContext *ctx, Uint32 draws)
             SDL_PushGPUComputeUniformData(command, 0, params, sizeof(params));
             SDL_DispatchGPUCompute(compute_pass, 1, 1, 1);
         } else {
+            if (ctx->test->pipeline_rebind) {
+                SDL_BindGPUGraphicsPipeline(pass, (i & 1) ? ctx->alternate_pipeline : ctx->pipeline);
+            }
             if (ctx->test->samplers) {
                 SDL_BindGPUFragmentSamplers(pass, 0, bindings, ctx->test->samplers);
             } else {
@@ -526,6 +585,7 @@ static bool RunDraws(TestContext *ctx, Uint32 draws)
             }
             SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         }
+        measure_allocations = false;
         if (!CheckMessages(ctx, i + 1)) {
             valid = false;
             break;
@@ -533,6 +593,13 @@ static bool RunDraws(TestContext *ctx, Uint32 draws)
     }
     SDL_Log("%s: recorded %u operations in %.3f ms (debug layer and message checks enabled)",
             ctx->test->name, i, (double)(SDL_GetTicksNS() - start) / 1000000.0);
+    if (ctx->test->fixed_resources) {
+        SDL_Log("%s: %llu SDL allocation requests across %u warmed pipeline binds/draws",
+                ctx->test->name, (unsigned long long)allocation_requests, draws > 128 ? draws - 128 : 0);
+        SDLTest_AssertCheck(draws > 128 && allocation_requests == 0,
+                            "Unchanged bindings survive compatible pipeline switches without allocating descriptor heaps");
+        valid = valid && draws > 128 && allocation_requests == 0;
+    }
     if (compute_pass) {
         SDL_EndGPUComputePass(compute_pass);
     } else {
@@ -627,6 +694,7 @@ static bool RunCase(const TestCase *test, Uint32 iterations)
     if (ctx.gpu) {
         SDL_ReleaseGPUTransferBuffer(ctx.gpu, ctx.download);
         SDL_ReleaseGPUGraphicsPipeline(ctx.gpu, ctx.pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(ctx.gpu, ctx.alternate_pipeline);
         SDL_ReleaseGPUComputePipeline(ctx.gpu, ctx.compute_pipeline);
         SDL_ReleaseGPUSampler(ctx.gpu, ctx.sampler);
         SDL_ReleaseGPUTexture(ctx.gpu, ctx.target);
@@ -682,6 +750,11 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+    allocation_thread = GetCurrentThreadId();
+    SDL_GetMemoryFunctions(&original_malloc, &original_calloc, &original_realloc, &original_free);
+    if (!SDL_SetMemoryFunctions(CountedMalloc, CountedCalloc, CountedRealloc, CountedFree)) {
+        return 2;
+    }
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_Init: %s", SDL_GetError());
         return 2;
@@ -700,5 +773,6 @@ int main(int argc, char **argv)
         ++executed;
     }
     SDL_Quit();
+    SDL_SetMemoryFunctions(original_malloc, original_calloc, original_realloc, original_free);
     return passed && executed > 0 ? 0 : 1;
 }
