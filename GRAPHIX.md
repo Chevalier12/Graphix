@@ -724,3 +724,39 @@ payloads, provenance and committed documentation, and its Windows x64 DLL
 will be exercised with the local GPU regression matrices before handoff.
 The maintainer will upload the verified archive personally. NuGet publication
 and Cerneala's dependency update remain separate, pending steps.
+
+### Verified graphix.6 package awaiting maintainer upload
+
+Workflow [34618709538](https://github.com/Chevalier12/Graphix/actions/runs/34618709538)
+passed at source commit `e912da037a59e33affc6ecd69be326265cdc748b`:
+
+- All six native builds and CTest suites passed: 31/31 on each Windows RID
+  and 25/25 on each Linux/macOS RID, 162 total, with zero failures or skipped
+  CTest entries. Both separate native Windows maximum-size gates also passed.
+- The exact downloaded Actions artifact ZIP matches its published SHA-256
+  digest. The unchanged archive's six native payloads, provenance, source
+  commit, NuGet metadata, license and committed README bytes passed the local
+  package verifier; the upload candidate was not repacked.
+- The exact packaged Windows x64 DLL passed the nine-case D3D12 descriptor
+  matrix in three iterations: 30/30 assertions, including zero SDL allocation
+  requests across 8,193 warmed compatible-pipeline draws in each iteration.
+  GPU readback and D3D12 validation passed.
+- The same DLL passed the GPU texture matrix on both D3D12 and Vulkan:
+  162/162 assertions per driver. Runtime revision output identifies graphix.6
+  and the source commit above. All 1,271 exported names and ordinals match
+  public graphix.5.
+
+Upload candidate: `out/packages/Graphix.Native.3.4.16-graphix.6.nupkg`,
+18,058,300 bytes. SHA-256:
+`2AA54E65A0C7D98EF3C4BDACF1A7711CEEFE1A804103ADA3447F19884AEF2351`.
+Actions artifact ID: `10272200855`; artifact ZIP SHA-256:
+`D744E2E590AA94E7F601A166696D07ECB3EAF29976ED658DCCB492FC3B904FC3`.
+Packaged Windows x64 DLL SHA-256:
+`2958F3D36859AD71ED5CA5D16B89768212FFE31F5C87CA48212EF6C5FD45A51F`.
+Local logs, JUnit summaries and package checks are retained under
+`out/evidence/release-graphix.6/`.
+
+The maintainer will upload this verified archive personally. NuGet publication,
+Cerneala's dependency update and exact-package consumer verification remain
+pending. The six-RID headless suite is not cross-platform GPU certification;
+GPU execution on other RIDs and human runtime validation were not performed.
