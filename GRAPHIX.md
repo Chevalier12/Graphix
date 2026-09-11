@@ -588,3 +588,77 @@ Publication and Cerneala's dependency update/consumer verification are still
 pending; the existing package has not been overwritten. This release does not
 claim to fix the independent NVIDIA alpha-occlusion failure. GPU execution on
 other RIDs and human runtime validation were not performed.
+
+## 2026-09-11: Windows input-producer shutdown and graphix.5 preparation
+
+The graphix.4 Windows hotplug worker could be inside a moving realloc of the
+generic mouse/keyboard device list while `SDL_VideoQuit` freed that list.
+`WIN_VideoQuit` joined the worker only later. The reported double-free in
+`SDL_QuitMouse` was reproduced against the graphix.4 DLL with SHA-256
+`27A0E7D4065ADB51A75DA28B94C9F23120E568CEB87CCD6DF5FA14823DF75C9E`,
+whose source is `7dcfac5a73007e72bd8fb060861e46fe07f55c46`.
+Binary offsets from that investigation are not regression-test contracts.
+
+Graphix adds an internal video input-shutdown phase before generic input
+teardown. Windows stops and joins its hotplug worker there, and disables raw
+input and shuts down GameInput while generic input state still exists. Raw
+input cleanup now joins without a timeout instead of abandoning a possibly
+running worker after three seconds. The public SDL headers, dynamic API and
+exported ABI are unchanged.
+
+The keyboard/mouse worker now belongs to the video lifetime, independently of
+the shared notification service's video/joystick reference count. Quitting
+video joins the worker even while joystick retains a notification reference;
+reinitializing video starts a new worker. A per-video acquisition flag balances
+notification cleanup after partial initialization. The notification event is
+closed only after the last reference unregisters callbacks.
+
+The permanent native `testwindowsinputlifetime` uses named PE imports and SDL's
+source-owned debugger thread-naming protocol, not DLL offsets, PDBs, sleeps or
+physical hotplug timing. It supplies two deterministic devices and suspends a
+moving allocator before publication. A helper releases the producer only after
+the main thread enters its join. RED quarantines allocations and reports the
+old-pointer free without corrupting the Windows heap. GREEN verifies that the
+published list is freed exactly once. The raw-input cases similarly suspend a
+live worker and require an unbounded join. Each of mouse, keyboard and raw input
+is tested with full Quit and with joystick retained across three video lifetimes.
+All six cases are registered in the normal shared-Windows CTest configuration.
+
+Local Windows x64 verification, MSVC 19.51, static CRT:
+
+- The initial four mouse/keyboard cases failed for the intended old-list free
+  before production changes. The final six cases all fail on the preserved
+  graphix.4 DLL: four old-list frees and two timed raw-input waits.
+- Final Release build with warnings as errors passed. All six regression cases
+  passed 30 times each: 180 process runs, 540 lifecycle iterations, zero failures.
+- Full configured CTest, including both opt-in GPU tests, passed 33/33 in
+  64.23 seconds with `SDL_TESTS_QUICK=1`; zero failures or skipped CTest entries.
+- The supplied live-device reproduction was adapted to resolve `SDL_mice`
+  from a matching optimized RelWithDebInfo PDB. With the original allocator,
+  a natural moving realloc, actual main-thread Quit, and explicit join/release
+  barriers, 3/3 processes passed. The old address was never passed to the
+  allocator as an invalid free. Address reuse was tracked separately.
+- The native maximize regression passed 400/400 assertions. All 1,271 export
+  names and ordinals match graphix.4; public headers/dynamic API are unchanged.
+- An initial full-suite run found an intermittent test-fixture timeout: the
+  OS thread description could be empty. Captured raw-input execution established
+  that the worker was present. Replacing that optional identification mechanism
+  with the source-owned naming protocol resolved the fixture; no production
+  workaround was added for it. The final full suite and repeated runs above
+  were rerun after this correction.
+
+Prepared the next unused package version, `3.4.16-graphix.5`, without replacing
+graphix.4. The normal six-RID workflow remains the package production gate and
+does not publish. `Pack-GraphixNative.ps1 -VerifyPackagePath` now validates the
+exact downloaded CI archive without repacking it, including NuGet source/version
+metadata and committed documentation bytes independent of checkout newlines.
+One valid synthetic six-RID fixture passed unchanged, and three corrupted
+fixtures were rejected (metadata, native hash, missing RID). PowerShell syntax,
+release-documentation, actionlint and git whitespace checks passed.
+
+At this preparation commit, the six-RID CI/package run is still pending and
+must complete before handing off an upload candidate. Local evidence is under
+`out/evidence/windows-input-lifetime/`. No Cerneala files were modified. No
+NuGet upload, downstream consumer certification, GameInput runtime validation,
+other-platform GPU execution or human manual validation is claimed. These
+Graphix changes were prepared with AI assistance.

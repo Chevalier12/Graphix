@@ -230,6 +230,10 @@ struct SDL_VideoDevice
      */
     void (*VideoQuit)(SDL_VideoDevice *_this);
 
+    /* Stop and join input producers before generic input state is destroyed.
+     * Must also tolerate a partially initialized video device. */
+    void (*VideoQuitInput)(SDL_VideoDevice *_this);
+
     /*
      * Reinitialize the touch devices -- called if an unknown touch ID occurs.
      */

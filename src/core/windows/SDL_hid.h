@@ -209,6 +209,8 @@ extern HidP_MaxDataListLength_t SDL_HidP_MaxDataListLength;
 extern HidP_GetData_t SDL_HidP_GetData;
 
 void WIN_InitDeviceNotification(void);
+void WIN_StartDeviceHotplug(void);
+void WIN_StopDeviceHotplug(void);
 Uint64 WIN_GetLastDeviceNotification(void);
 void WIN_QuitDeviceNotification(void);
 

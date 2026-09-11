@@ -3,7 +3,10 @@
 param(
     [Parameter(Mandatory)]
     [ValidatePattern('^3\.4\.16-graphix\.[1-9][0-9]*$')]
-    [string] $PackageVersion
+    [string] $PackageVersion,
+
+    # Validate the exact official CI artifact without recreating or publishing it.
+    [string] $VerifyPackagePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,8 +15,12 @@ $graphixRoot = Split-Path -Parent $PSScriptRoot
 & (Join-Path $PSScriptRoot 'Test-GraphixReleaseDocumentation.ps1') -PackageVersion $PackageVersion
 $nativeRoot = Join-Path $graphixRoot "out/graphix/$PackageVersion"
 $packageRoot = Join-Path $graphixRoot 'out/packages'
-$packagePath = Join-Path $packageRoot "Graphix.Native.$PackageVersion.nupkg"
-if (Test-Path -LiteralPath $packagePath) {
+$packagePath = if ($VerifyPackagePath) {
+    (Resolve-Path -LiteralPath $VerifyPackagePath).Path
+} else {
+    Join-Path $packageRoot "Graphix.Native.$PackageVersion.nupkg"
+}
+if (-not $VerifyPackagePath -and (Test-Path -LiteralPath $packagePath)) {
     throw "Refusing to overwrite an existing version: $packagePath"
 }
 
@@ -56,19 +63,59 @@ if ($LASTEXITCODE -ne 0 -or $checkoutCommit -ne $sourceCommit) {
     throw 'Package using the same Graphix checkout commit as the native artifacts.'
 }
 
-New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
-$projectPath = Join-Path $graphixRoot 'packaging/Graphix.Native/Graphix.Native.csproj'
-& dotnet pack $projectPath -c Release "-p:PackageVersion=$PackageVersion" `
-    "-p:GraphixNativeRoot=$nativeRoot" "-p:RepositoryCommit=$sourceCommit" -o $packageRoot
-if ($LASTEXITCODE -ne 0) { throw 'Graphix NuGet pack failed.' }
+if (-not $VerifyPackagePath) {
+    New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+    $projectPath = Join-Path $graphixRoot 'packaging/Graphix.Native/Graphix.Native.csproj'
+    & dotnet pack $projectPath -c Release "-p:PackageVersion=$PackageVersion" `
+        "-p:GraphixNativeRoot=$nativeRoot" "-p:RepositoryCommit=$sourceCommit" -o $packageRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Graphix NuGet pack failed.' }
+}
 if (-not (Test-Path -LiteralPath $packagePath)) { throw 'Expected Graphix package was not created.' }
 
-$expectedEntries['LICENSE.txt'] = (Get-FileHash -LiteralPath (Join-Path $graphixRoot 'LICENSE.txt') -Algorithm SHA256).Hash
-$expectedEntries['README-SDL.md'] = (Get-FileHash -LiteralPath (Join-Path $graphixRoot 'README-SDL.md') -Algorithm SHA256).Hash
-$expectedEntries['README.md'] = (Get-FileHash -LiteralPath (Join-Path $graphixRoot 'packaging/Graphix.Native/README.md') -Algorithm SHA256).Hash
+function Get-DocumentHash([string] $relativePath) {
+    if (-not $VerifyPackagePath) {
+        return (Get-FileHash -LiteralPath (Join-Path $graphixRoot $relativePath) -Algorithm SHA256).Hash
+    }
+    # The official package job uses an LF checkout. Compare committed bytes,
+    # not Windows checkout CRLF conversions, without normalizing the archive.
+    $git = [Diagnostics.Process]::new()
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try {
+        $git.StartInfo.FileName = 'git'
+        $git.StartInfo.UseShellExecute = $false
+        $git.StartInfo.CreateNoWindow = $true
+        $git.StartInfo.RedirectStandardOutput = $true
+        foreach ($argument in @('-C', $graphixRoot, 'cat-file', 'blob', "${sourceCommit}:$relativePath")) {
+            $git.StartInfo.ArgumentList.Add($argument)
+        }
+        if (-not $git.Start()) { throw 'Cannot read committed package documentation.' }
+        $result = [Convert]::ToHexString($hash.ComputeHash($git.StandardOutput.BaseStream))
+        $git.WaitForExit()
+        if ($git.ExitCode -ne 0) { throw "Cannot read committed $relativePath." }
+        return $result
+    }
+    finally {
+        $hash.Dispose()
+        $git.Dispose()
+    }
+}
+
+$expectedEntries['LICENSE.txt'] = Get-DocumentHash 'LICENSE.txt'
+$expectedEntries['README-SDL.md'] = Get-DocumentHash 'README-SDL.md'
+$expectedEntries['README.md'] = Get-DocumentHash 'packaging/Graphix.Native/README.md'
 $package = [IO.Compression.ZipFile]::OpenRead($packagePath)
 $hasher = [Security.Cryptography.SHA256]::Create()
 try {
+    $nuspec = $package.GetEntry('Graphix.Native.nuspec')
+    if (-not $nuspec) { throw 'Missing Graphix NuGet metadata.' }
+    $reader = [IO.StreamReader]::new($nuspec.Open())
+    try { $metadata = ([xml]$reader.ReadToEnd()).package.metadata }
+    finally { $reader.Dispose() }
+    if ($metadata.id -ne 'Graphix.Native' -or $metadata.version -ne $PackageVersion -or
+        $metadata.repository.commit -ne $sourceCommit -or
+        $metadata.repository.url -ne 'https://github.com/Chevalier12/Graphix') {
+        throw 'NuGet metadata does not match the verified Graphix source/version.'
+    }
     foreach ($entryName in $expectedEntries.Keys) {
         $entry = $package.GetEntry($entryName)
         if ($null -eq $entry) { throw "Missing package entry: $entryName" }

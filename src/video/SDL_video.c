@@ -4667,6 +4667,11 @@ void SDL_VideoQuit(void)
 
     _this->is_quitting = true;
 
+    // Graphix: quiesce backend input while generic input state is still alive.
+    if (_this->VideoQuitInput) {
+        _this->VideoQuitInput(_this);
+    }
+
     // Halt event processing before doing anything else
 #if 0 // This was moved to the end to fix a memory leak
     SDL_QuitPen();

@@ -7,7 +7,7 @@ on:
       package_version:
         description: New Graphix.Native prerelease version
         required: true
-        default: 3.4.16-graphix.4
+        default: 3.4.16-graphix.5
         type: string
 
 permissions:

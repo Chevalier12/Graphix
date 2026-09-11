@@ -175,7 +175,7 @@ static CM_Register_NotificationFunc CM_Register_Notification;
 static CM_Unregister_NotificationFunc CM_Unregister_Notification;
 static HCMNOTIFICATION s_DeviceNotificationFuncHandle;
 static Uint64 s_LastDeviceNotification = 1;
-static HANDLE s_HotplugEvent = INVALID_HANDLE_VALUE;
+static HANDLE s_HotplugEvent;
 static SDL_AtomicInt s_HotplugRunning;
 static SDL_Thread *s_HotplugThread;
 
@@ -219,10 +219,9 @@ void WIN_InitDeviceNotification(void)
         return;
     }
 
-    // Start the device hotplug thread
-    SDL_SetAtomicInt(&s_HotplugRunning, true);
+    // The notification service is shared with joystick. Its event outlives
+    // the video-owned keyboard/mouse worker when joystick retains a reference.
     s_HotplugEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-    s_HotplugThread = SDL_CreateThread(DeviceHotplugThread, "DeviceHotplugThread", NULL);
 
     cfgmgr32_lib_handle = LoadLibraryA("cfgmgr32.dll");
     if (cfgmgr32_lib_handle) {
@@ -249,6 +248,28 @@ Uint64 WIN_GetLastDeviceNotification(void)
     return s_LastDeviceNotification;
 }
 
+// Graphix: input producers belong to the video/input lifetime, not to the
+// last reference to the shared device notification service.
+void WIN_StartDeviceHotplug(void)
+{
+    SDL_assert(s_DeviceNotificationsRequested > 0);
+    SDL_assert(!s_HotplugThread);
+    if (s_HotplugEvent) {
+        SDL_SetAtomicInt(&s_HotplugRunning, true);
+        s_HotplugThread = SDL_CreateThread(DeviceHotplugThread, "DeviceHotplugThread", NULL);
+    }
+}
+
+void WIN_StopDeviceHotplug(void)
+{
+    if (s_HotplugThread) {
+        SDL_SetAtomicInt(&s_HotplugRunning, false);
+        SetEvent(s_HotplugEvent);
+        SDL_WaitThread(s_HotplugThread, NULL);
+        s_HotplugThread = NULL;
+    }
+}
+
 void WIN_QuitDeviceNotification(void)
 {
     if (--s_DeviceNotificationsRequested > 0) {
@@ -257,11 +278,7 @@ void WIN_QuitDeviceNotification(void)
     // Make sure we have balanced calls to init/quit
     SDL_assert(s_DeviceNotificationsRequested == 0);
 
-    // Stop the device hotplug thread
-    SDL_SetAtomicInt(&s_HotplugRunning, false);
-    SetEvent(s_HotplugEvent);
-    SDL_WaitThread(s_HotplugThread, NULL);
-    s_HotplugThread = NULL;
+    SDL_assert(!s_HotplugThread);
 
     if (cfgmgr32_lib_handle) {
         if (s_DeviceNotificationFuncHandle && CM_Unregister_Notification) {
@@ -271,6 +288,12 @@ void WIN_QuitDeviceNotification(void)
 
         FreeLibrary(cfgmgr32_lib_handle);
         cfgmgr32_lib_handle = NULL;
+    }
+
+    // Unregister first: an in-flight notification can still signal this event.
+    if (s_HotplugEvent) {
+        CloseHandle(s_HotplugEvent);
+        s_HotplugEvent = NULL;
     }
 }
 

@@ -136,6 +136,7 @@ struct ITaskbarList3
 // Initialization/Query functions
 static bool WIN_VideoInit(SDL_VideoDevice *_this);
 static void WIN_VideoQuit(SDL_VideoDevice *_this);
+static void WIN_VideoQuitInput(SDL_VideoDevice *_this);
 
 // Hints
 bool g_WindowsEnableMessageLoop = true;
@@ -321,6 +322,7 @@ static SDL_VideoDevice *WIN_CreateDevice(void)
     // Set the function pointers
     device->VideoInit = WIN_VideoInit;
     device->VideoQuit = WIN_VideoQuit;
+    device->VideoQuitInput = WIN_VideoQuitInput;
 #if !defined(SDL_PLATFORM_XBOXONE) && !defined(SDL_PLATFORM_XBOXSERIES)
     device->RefreshDisplays = WIN_RefreshDisplays;
     device->GetDisplayBounds = WIN_GetDisplayBounds;
@@ -643,6 +645,8 @@ static bool WIN_VideoInit(SDL_VideoDevice *_this)
     WIN_InitKeyboard(_this);
     WIN_InitMouse(_this);
     WIN_InitDeviceNotification();
+    data->device_notification_initialized = true;
+    WIN_StartDeviceHotplug();
 #endif
 
     SDL_AddHintCallback(SDL_HINT_WINDOWS_RAW_KEYBOARD, UpdateWindowsRawKeyboard, _this);
@@ -660,24 +664,35 @@ static bool WIN_VideoInit(SDL_VideoDevice *_this)
     return true;
 }
 
-void WIN_VideoQuit(SDL_VideoDevice *_this)
+static void WIN_VideoQuitInput(SDL_VideoDevice *_this)
 {
-    SDL_VideoData *data = _this->internal;
+#if !defined(SDL_PLATFORM_XBOXONE) && !defined(SDL_PLATFORM_XBOXSERIES)
+    WIN_StopDeviceHotplug();
+#endif
 
     SDL_RemoveHintCallback(SDL_HINT_WINDOWS_RAW_KEYBOARD, UpdateWindowsRawKeyboard, _this);
     SDL_RemoveHintCallback(SDL_HINT_WINDOWS_RAW_KEYBOARD_EXCLUDE_HOTKEYS, UpdateWindowsRawKeyboardNoHotkeys, _this);
     SDL_RemoveHintCallback(SDL_HINT_WINDOWS_RAW_KEYBOARD_INPUTSINK, UpdateWindowsRawKeyboardInputsink, _this);
-    SDL_RemoveHintCallback(SDL_HINT_WINDOWS_ENABLE_MESSAGELOOP, UpdateWindowsEnableMessageLoop, NULL);
-    SDL_RemoveHintCallback(SDL_HINT_WINDOWS_ENABLE_MENU_MNEMONICS, UpdateWindowsEnableMenuMnemonics, NULL);
-    SDL_RemoveHintCallback(SDL_HINT_WINDOW_FRAME_USABLE_WHILE_CURSOR_HIDDEN, UpdateWindowFrameUsableWhileCursorHidden, NULL);
 
     WIN_SetRawMouseEnabled(_this, false);
     WIN_SetRawKeyboardEnabled(_this, false);
     WIN_QuitGameInput(_this);
+}
+
+void WIN_VideoQuit(SDL_VideoDevice *_this)
+{
+    SDL_VideoData *data = _this->internal;
+
+    SDL_RemoveHintCallback(SDL_HINT_WINDOWS_ENABLE_MESSAGELOOP, UpdateWindowsEnableMessageLoop, NULL);
+    SDL_RemoveHintCallback(SDL_HINT_WINDOWS_ENABLE_MENU_MNEMONICS, UpdateWindowsEnableMenuMnemonics, NULL);
+    SDL_RemoveHintCallback(SDL_HINT_WINDOW_FRAME_USABLE_WHILE_CURSOR_HIDDEN, UpdateWindowFrameUsableWhileCursorHidden, NULL);
 
 #if !defined(SDL_PLATFORM_XBOXONE) && !defined(SDL_PLATFORM_XBOXSERIES)
     WIN_QuitModes(_this);
-    WIN_QuitDeviceNotification();
+    if (data->device_notification_initialized) {
+        WIN_QuitDeviceNotification();
+        data->device_notification_initialized = false;
+    }
     WIN_QuitKeyboard(_this);
     WIN_QuitMouse(_this);
 

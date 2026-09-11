@@ -37,10 +37,14 @@ See [GRAPHIX.md](GRAPHIX.md) for the change record and verification status.
 
 ## Install the native runtime
 
-The public package feed is [NuGet.org](https://www.nuget.org/packages/Graphix.Native/3.4.16-graphix.4):
+The graphix.5 candidate is prepared for maintainer upload; the following
+installation commands apply after that upload. This repository's workflow
+builds and verifies the archive but does not publish it.
+
+The public package feed is [NuGet.org](https://www.nuget.org/packages/Graphix.Native/3.4.16-graphix.5):
 
 ```powershell
-dotnet add package Graphix.Native --version 3.4.16-graphix.4
+dotnet add package Graphix.Native --version 3.4.16-graphix.5
 ```
 
 This prerelease package contains Windows, Linux and macOS native assets for

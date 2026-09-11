@@ -143,7 +143,8 @@ static void CleanupRawInputThreadData(RawInputThreadData *data)
     if (data->thread != INVALID_HANDLE_VALUE) {
         data->done = true;
         SetEvent(data->done_event);
-        WaitForSingleObject(data->thread, 3000);
+        // Graphix: the worker still owns input state until it has exited.
+        WaitForSingleObject(data->thread, INFINITE);
         CloseHandle(data->thread);
         data->thread = INVALID_HANDLE_VALUE;
     }
